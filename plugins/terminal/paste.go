@@ -265,6 +265,9 @@ func queue[T any](q []T, v T) []T {
 // sendReply queues a paste's reply in pieces, each telling how far it went
 // once written, which a slow link makes worth watching; t.mu is held.
 func (t *Terminal) sendReply(p []byte) {
+	if t.conpty() {
+		return
+	}
 	total, sent := int64(len(p)), int64(0)
 	// Told from the queue's goroutine, as the pieces are: here the
 	// terminal is locked, which OnPasteStatus may need.
