@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -19,6 +20,9 @@ var (
 	procInitializeProcThreadAttributeList = kernel32.NewProc("InitializeProcThreadAttributeList")
 	procUpdateProcThreadAttribute         = kernel32.NewProc("UpdateProcThreadAttribute")
 	procDeleteProcThreadAttributeList     = kernel32.NewProc("DeleteProcThreadAttributeList")
+	procAttachConsole                     = kernel32.NewProc("AttachConsole")
+	procFreeConsole                       = kernel32.NewProc("FreeConsole")
+	procSetConsoleMode                    = kernel32.NewProc("SetConsoleMode")
 	procRtlGetVersion                     = syscall.NewLazyDLL("ntdll.dll").NewProc("RtlGetVersion") // a KnownDLL
 )
 
@@ -26,6 +30,7 @@ const (
 	procThreadAttributePseudoConsole = 0x00020016
 	extendedStartupInfoPresent       = 0x00080000
 	createUnicodeEnvironment         = 0x00000400
+	enableVirtualTerminalInput       = 0x0200
 )
 
 type startupInfoEx struct {
@@ -74,6 +79,7 @@ func (p *PTY) start(o Options) error {
 		p.out.Close()
 		return err
 	}
+	p.setVTInput()
 	return nil
 }
 
@@ -118,6 +124,47 @@ func (p *PTY) spawn(o Options) error {
 	syscall.CloseHandle(pi.Thread)
 	p.process, p.pid = pi.Process, int(pi.ProcessId)
 	return nil
+}
+
+// setVTInput turns on virtual terminal input in the console it just made.
+// A console that has the bit off when a program asks for the mouse keeps that
+// to itself and tells the terminal nothing, so the program never hears the
+// wheel: pi asks for the mouse before bun turns the bit on itself, and the
+// wheel it should have got arrives as alternate scroll, as arrow keys, which
+// its prompt box takes for the history. Windows Terminal has the bit on for
+// every session; a console made here starts without it. It is best effort: a
+// console that refuses loses nothing it had.
+func (p *PTY) setVTInput() {
+	// AttachConsole wants a process that has no console of its own. This one
+	// is a window, which may have been started from a terminal.
+	procFreeConsole.Call()
+	if !attach(p.pid) {
+		return
+	}
+	defer procFreeConsole.Call()
+	f, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	h := syscall.Handle(f.Fd())
+	var mode uint32
+	if err := syscall.GetConsoleMode(h, &mode); err != nil || mode&enableVirtualTerminalInput != 0 {
+		return
+	}
+	procSetConsoleMode.Call(uintptr(h), uintptr(mode|enableVirtualTerminalInput))
+}
+
+// attach attaches to the console of pid, which refuses while it is still
+// coming up: it answers a few tries later.
+func attach(pid int) bool {
+	for range 40 {
+		if r, _, _ := procAttachConsole.Call(uintptr(pid)); r != 0 {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
 }
 
 func (p *PTY) wait() (int, error) {
