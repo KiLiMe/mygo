@@ -925,6 +925,11 @@ func (v *view) encodeKey(k vt.KeyEvent, press bool) bool {
 	if len(b) == 0 {
 		b = controlKey(k)
 	}
+	if t.conpty() && t.term.KittyKeyboardFlags() != 0 {
+		if legacy := legacyKey(t.term, k); legacy != nil {
+			b = legacy
+		}
+	}
 	if len(b) == 0 {
 		return false
 	}
@@ -953,6 +958,64 @@ func controlKey(k vt.KeyEvent) []byte {
 		return nil
 	}
 	return []byte(c)
+}
+
+// legacyKeys are how the keys the Kitty keyboard protocol turns into CSI u
+// read to a program that never turned it on.
+var legacyKeys = map[vt.Key]string{
+	vt.KeyInsert:     "\x1b[2~",
+	vt.KeyDelete:     "\x1b[3~",
+	vt.KeyPageUp:     "\x1b[5~",
+	vt.KeyPageDown:   "\x1b[6~",
+	vt.KeyHome:       "\x1b[H",
+	vt.KeyEnd:        "\x1b[F",
+	vt.KeyArrowUp:    "\x1b[A",
+	vt.KeyArrowDown:  "\x1b[B",
+	vt.KeyArrowRight: "\x1b[C",
+	vt.KeyArrowLeft:  "\x1b[D",
+}
+
+// legacyAppKeys are how Home, End and the arrows read when the program asked
+// for DECCKM: ESC O instead of ESC [.
+var legacyAppKeys = map[vt.Key]string{
+	vt.KeyHome:       "\x1bOH",
+	vt.KeyEnd:        "\x1bOF",
+	vt.KeyArrowUp:    "\x1bOA",
+	vt.KeyArrowDown:  "\x1bOB",
+	vt.KeyArrowRight: "\x1bOC",
+	vt.KeyArrowLeft:  "\x1bOD",
+}
+
+// legacyKey encodes a key the way a terminal did before the Kitty keyboard
+// protocol, as xterm and a ConPTY read it. A ConPTY parses what the terminal
+// writes into its input and keeps only what it can turn into keys: text, C0
+// controls and CSI. The protocol's CSI u forms are not among those, so a
+// program that turned the protocol on loses every key encoded that way, while
+// the plain forms still arrive. Nil means the protocol's form stands.
+func legacyKey(term *vt.Terminal, k vt.KeyEvent) []byte {
+	if k.Action == vt.KeyRelease || k.Text != "" {
+		return nil
+	}
+	if k.Mods == vt.ModShift && k.Key == vt.KeyTab {
+		return []byte("\x1b[Z")
+	}
+	// Legacy terminals tell no Ctrl+Shift+letter from Ctrl+letter: both are the
+	// C0 control.
+	if k.Mods&^vt.ModShift == vt.ModCtrl && k.Key >= vt.KeyA && k.Key <= vt.KeyZ {
+		return []byte{byte(k.Key-vt.KeyA) + 1}
+	}
+	if k.Mods != 0 {
+		return nil
+	}
+	if term != nil && term.Mode(vt.ModeCursorKeys) {
+		if s, ok := legacyAppKeys[k.Key]; ok {
+			return []byte(s)
+		}
+	}
+	if s, ok := legacyKeys[k.Key]; ok {
+		return []byte(s)
+	}
+	return nil
 }
 
 // sendText sends text that is no key, as of an input method.
