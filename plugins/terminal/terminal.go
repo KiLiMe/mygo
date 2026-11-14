@@ -619,7 +619,7 @@ func New(opts Options) (*Terminal, error) {
 	t.term, err = vt.NewTerminal(80, 24, vt.Effects{
 		WritePTY: func(p []byte) {
 			if !t.replying {
-				t.in.push(append([]byte(nil), p...))
+				t.writeReply(p)
 				return
 			}
 			t.replying = false
@@ -1065,7 +1065,7 @@ func (t *Terminal) schemeChanged(old, theme *Theme) {
 	if theme.dark() {
 		n = 1
 	}
-	t.in.push([]byte(fmt.Sprintf("\x1b[?997;%dn", n)))
+	t.writeReply([]byte(fmt.Sprintf("\x1b[?997;%dn", n)))
 }
 
 // SetTheme changes the colors, as Options.Theme and DarkTheme.
@@ -1511,4 +1511,25 @@ func vtCursor(s CursorStyle) vt.CursorStyle {
 		return vt.CursorUnderline
 	}
 	return vt.CursorBlock
+}
+
+// writeReply queues a reply to the program, unless a ConPTY sits between the
+// two. Which bytes a ConPTY keeps of what the terminal writes into its input is
+// not something to rely on: it answers a query itself, and it holds or drops
+// replies, or hands the program their tails, as typing. pi asks for the
+// colors, the terminal's and the palette's, while it opens, and one tail of an
+// answer lands in its input box. With a Conn there is no ConPTY in between, and
+// the replies go through.
+func (t *Terminal) writeReply(p []byte) {
+	if t.conpty() {
+		return
+	}
+	t.in.push(append([]byte(nil), p...))
+}
+
+// conpty reports whether the program sits behind a ConPTY, the only pty
+// Windows has, which reads the bytes the terminal writes into its input. A
+// Conn means the program is on another machine, with no ConPTY between them.
+func (t *Terminal) conpty() bool {
+	return t.opts.Conn == nil && runtime.GOOS == "windows"
 }
