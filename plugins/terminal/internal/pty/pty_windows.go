@@ -79,7 +79,6 @@ func (p *PTY) start(o Options) error {
 		p.out.Close()
 		return err
 	}
-	p.setVTInput()
 	return nil
 }
 
@@ -117,54 +116,53 @@ func (p *PTY) spawn(o Options) error {
 		env = &block[0]
 	}
 	var pi syscall.ProcessInformation
-	err = syscall.CreateProcess(nil, cmdline, nil, nil, false, extendedStartupInfoPresent|createUnicodeEnvironment, env, dir, &si.StartupInfo, &pi)
-	if err != nil {
+	flags := uint32(extendedStartupInfoPresent | createUnicodeEnvironment)
+	if err := syscall.CreateProcess(nil, cmdline, nil, nil, false, flags, env, dir, &si.StartupInfo, &pi); err != nil {
 		return fmt.Errorf("pty: starting %s: %w", o.Path, err)
 	}
 	syscall.CloseHandle(pi.Thread)
 	p.process, p.pid = pi.Process, int(pi.ProcessId)
+	enableVTInput(p.pid)
 	return nil
 }
 
-// setVTInput turns on virtual terminal input in the console it just made.
-// A console that has the bit off when a program asks for the mouse keeps that
-// to itself and tells the terminal nothing, so the program never hears the
-// wheel: pi asks for the mouse before bun turns the bit on itself, and the
-// wheel it should have got arrives as alternate scroll, as arrow keys, which
-// its prompt box takes for the history. Windows Terminal has the bit on for
-// every session; a console made here starts without it. It is best effort: a
-// console that refuses loses nothing it had.
-func (p *PTY) setVTInput() {
-	// AttachConsole wants a process that has no console of its own. This one
-	// is a window, which may have been started from a terminal.
+// enableVTInput turns on virtual terminal input in the console the program just
+// got.
+//
+// conhost hands on the mouse modes a program asks for only while that bit is
+// already on, and keeps them otherwise. pi asks for the mouse while bun has not
+// turned the bit on yet, so its wheel arrived as alternate scroll, as arrow
+// keys its prompt box takes for history. A Windows Terminal session starts with
+// the bit on, a console made here starts without it. Best effort: a console
+// that refuses loses nothing it had.
+func enableVTInput(pid int) {
+	// AttachConsole wants a process with no console of its own; this one may
+	// have been started from a terminal. The console of the new process answers
+	// only once it exists, which takes a few tries after CreateProcess.
 	procFreeConsole.Call()
-	if !attach(p.pid) {
+	attached := false
+	for range 40 {
+		if r, _, _ := procAttachConsole.Call(uintptr(pid)); r != 0 {
+			attached = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !attached {
 		return
 	}
 	defer procFreeConsole.Call()
-	f, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
+	in, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	h := syscall.Handle(f.Fd())
+	defer in.Close()
+	h := syscall.Handle(in.Fd())
 	var mode uint32
 	if err := syscall.GetConsoleMode(h, &mode); err != nil || mode&enableVirtualTerminalInput != 0 {
 		return
 	}
 	procSetConsoleMode.Call(uintptr(h), uintptr(mode|enableVirtualTerminalInput))
-}
-
-// attach attaches to the console of pid, which refuses while it is still
-// coming up: it answers a few tries later.
-func attach(pid int) bool {
-	for range 40 {
-		if r, _, _ := procAttachConsole.Call(uintptr(pid)); r != 0 {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
 }
 
 func (p *PTY) wait() (int, error) {
