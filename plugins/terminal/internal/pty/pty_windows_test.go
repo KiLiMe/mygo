@@ -121,6 +121,9 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv("MYGO_PTY_HELPER") != "mouse" {
 		return
 	}
+	// A program asks for the mouse once it draws its first frame, well after the
+	// console gave it a mode; the bit is set here a few milliseconds in.
+	time.Sleep(50 * time.Millisecond)
 	fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h")
 	time.Sleep(time.Second)
 }
