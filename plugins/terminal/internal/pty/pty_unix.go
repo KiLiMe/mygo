@@ -105,10 +105,10 @@ func (p *PTY) Resize(cols, rows, width, height int) error {
 // clear, unlike ConPTY's console.
 func (p *PTY) ClearScreen() error { return nil }
 
-// KeepsReplies reports whether something between the terminal and the program
+// PassesReplies reports whether something between the terminal and the program
 // keeps to itself what the terminal writes into its input: a Unix pty hands it
 // on as it is.
-func KeepsReplies() bool { return false }
+func PassesReplies() bool { return true }
 
 // Pid returns the process's ID.
 func (p *PTY) Pid() int { return p.cmd.Process.Pid }

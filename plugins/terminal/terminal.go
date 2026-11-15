@@ -1520,7 +1520,7 @@ func vtCursor(s CursorStyle) vt.CursorStyle {
 // this package carries hands them on as they are, and a Conn has none in
 // between.
 func (t *Terminal) writeReply(p []byte) {
-	if t.conpty() && pty.KeepsReplies() {
+	if t.conpty() && !pty.PassesReplies() {
 		return
 	}
 	t.in.push(append([]byte(nil), p...))
