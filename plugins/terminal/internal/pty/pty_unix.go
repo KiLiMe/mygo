@@ -110,6 +110,16 @@ func (p *PTY) ClearScreen() error { return nil }
 // on as it is.
 func PassesReplies() bool { return true }
 
+// ConPTYInfo says which ConPTY terminals are made in; a Unix pty has none.
+type ConPTYInfo struct {
+	Path   string
+	Reason string
+}
+
+// ConPTY returns which ConPTY terminals are made in: there is none here, the
+// pty is the pty of the system.
+func ConPTY() ConPTYInfo { return ConPTYInfo{Reason: "a Unix pty has no ConPTY"} }
+
 // Pid returns the process's ID.
 func (p *PTY) Pid() int { return p.cmd.Process.Pid }
 
