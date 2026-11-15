@@ -1513,15 +1513,14 @@ func vtCursor(s CursorStyle) vt.CursorStyle {
 	return vt.CursorBlock
 }
 
-// writeReply queues a reply to the program, unless a ConPTY sits between the
-// two. Which bytes a ConPTY keeps of what the terminal writes into its input is
-// not something to rely on: it answers a query itself, and it holds or drops
-// replies, or hands the program their tails, as typing. pi asks for the
-// colors, the terminal's and the palette's, while it opens, and one tail of an
-// answer lands in its input box. With a Conn there is no ConPTY in between, and
-// the replies go through.
+// writeReply queues a reply to the program, unless the console between the two
+// keeps it. Windows' own ConPTY answers a query itself, and holds or drops the
+// replies, or hands the program their tails, as typing: pi asks for the colors
+// while it opens, and one tail of an answer lands in its input box. The ConPTY
+// this package carries hands them on as they are, and a Conn has none in
+// between.
 func (t *Terminal) writeReply(p []byte) {
-	if t.conpty() {
+	if t.conpty() && pty.KeepsReplies() {
 		return
 	}
 	t.in.push(append([]byte(nil), p...))
