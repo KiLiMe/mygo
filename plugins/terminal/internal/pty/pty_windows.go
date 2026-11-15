@@ -40,6 +40,7 @@ type startupInfoEx struct {
 
 type sys struct {
 	mu      sync.Mutex
+	conpty  conPTY  // the one start made this console in
 	console uintptr // the HPCON, 0 once closed
 	in      *os.File
 	out     *os.File
@@ -47,8 +48,18 @@ type sys struct {
 	pid     int
 }
 
+// conPTY returns the ConPTY this terminal is made in: the one start chose, or
+// Windows' own before one starts.
+func (p *PTY) conPTY() conPTY {
+	if p.conpty.create == nil {
+		return systemConPTY
+	}
+	return p.conpty
+}
+
 func (p *PTY) start(o Options) error {
-	if err := procCreatePseudoConsole.Find(); err != nil {
+	cp := conpty()
+	if err := cp.create.Find(); err != nil {
 		return errors.New("pty: ConPTY needs Windows 10 1809 or later")
 	}
 	// The console reads what is typed from inR and writes the output to
@@ -63,7 +74,14 @@ func (p *PTY) start(o Options) error {
 		return fmt.Errorf("pty: %w", err)
 	}
 	var console uintptr
-	r, _, _ := procCreatePseudoConsole.Call(coord(o.Cols, o.Rows), uintptr(inR), uintptr(outW), 0, uintptr(unsafe.Pointer(&console)))
+	r, _, _ := cp.create.Call(coord(o.Cols, o.Rows), uintptr(inR), uintptr(outW), 0, uintptr(unsafe.Pointer(&console)))
+	if r != 0 && cp.create != systemConPTY.create {
+		// The ConPTY this package carries answers nothing when the
+		// OpenConsole.exe beside it can't start there: Windows' own
+		// console is the next best thing.
+		cp = systemConPTY
+		r, _, _ = cp.create.Call(coord(o.Cols, o.Rows), uintptr(inR), uintptr(outW), 0, uintptr(unsafe.Pointer(&console)))
+	}
 	// The console has its own copies of its ends.
 	syscall.CloseHandle(inR)
 	syscall.CloseHandle(outW)
@@ -72,6 +90,7 @@ func (p *PTY) start(o Options) error {
 		syscall.CloseHandle(outR)
 		return fmt.Errorf("pty: CreatePseudoConsole: %w", syscall.Errno(r&0xFFFF))
 	}
+	p.conpty = cp
 	p.console = console
 	p.in, p.out = os.NewFile(uintptr(inW), "conpty-in"), os.NewFile(uintptr(outR), "conpty-out")
 	if err := p.spawn(o); err != nil {
@@ -122,12 +141,15 @@ func (p *PTY) spawn(o Options) error {
 	}
 	syscall.CloseHandle(pi.Thread)
 	p.process, p.pid = pi.Process, int(pi.ProcessId)
-	enableVTInput(p.pid)
+	if p.conPTY().create == systemConPTY.create {
+		enableVTInput(p.pid)
+	}
 	return nil
 }
 
 // enableVTInput turns on virtual terminal input in the console the program just
-// got.
+// got, which Windows' own ConPTY needs: the one from Windows Terminal passes
+// what a program asks for on its first frame as it is.
 //
 // conhost hands on the mouse modes a program asks for only while that bit is
 // already on, and keeps them otherwise. pi asks for the mouse while bun has not
@@ -195,7 +217,7 @@ func (p *PTY) Resize(cols, rows, width, height int) error {
 	if p.console == 0 {
 		return ErrClosed
 	}
-	if r, _, _ := procResizePseudoConsole.Call(p.console, coord(cols, rows)); r != 0 {
+	if r, _, _ := p.conPTY().resize.Call(p.console, coord(cols, rows)); r != 0 {
 		return fmt.Errorf("pty: ResizePseudoConsole: %w", syscall.Errno(r&0xFFFF))
 	}
 	return nil
@@ -206,15 +228,23 @@ func (p *PTY) Resize(cols, rows, width, height int) error {
 // buffer and repaints with the cursor's line at the top. Without it, the
 // console keeps the prompt on its old row and, as it redraws with
 // absolute cursor moves (PSReadLine's predictions), takes the cursor back
-// down there. It does nothing before Windows 11 24H2, whose console may
-// shut down on a signal it doesn't know, or once the console is closed.
+// down there. The ConPTY this package carries clears without repainting,
+// and the terminal draws its own screen again anyway; Windows' own console
+// does nothing before Windows 11 24H2, whose console may shut down on a
+// signal it doesn't know, or once the console is closed.
 func (p *PTY) ClearScreen() error {
-	if windowsBuild() < 26100 {
-		return nil
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.console == 0 {
+		return nil
+	}
+	if clear := p.conPTY().clear; clear != nil {
+		if r, _, _ := clear.Call(p.console); r != 0 {
+			return fmt.Errorf("pty: ClearPseudoConsole: %w", syscall.Errno(r&0xFFFF))
+		}
+		return nil
+	}
+	if windowsBuild() < 26100 {
 		return nil
 	}
 	// kernel32 doesn't export ClearPseudoConsole. The HPCON points at the
@@ -267,8 +297,9 @@ func (p *PTY) Close() error {
 	// ClosePseudoConsole waits for the output to be read on Windows
 	// before 11 24H2: Read keeps reading meanwhile, until the end of the
 	// output, then the pipe goes.
+	closeConsole := p.conPTY().close
 	go func() {
-		procClosePseudoConsole.Call(console)
+		closeConsole.Call(console)
 		p.out.Close()
 	}()
 	return nil
