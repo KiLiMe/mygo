@@ -17,6 +17,20 @@ import (
 	"github.com/egoist/mygo/internal/wait"
 )
 
+// useShippedConPTY makes the tests that follow run in the ConPTY the app ships,
+// the directory MYGO_CONPTY names, since this package carries none: a machine
+// without one skips them rather than proving them in Windows' own console.
+func useShippedConPTY(t *testing.T) {
+	dir := os.Getenv("MYGO_CONPTY")
+	if dir == "" || dir == "system" {
+		t.Skip("MYGO_CONPTY names no directory the app ships a ConPTY in")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "conpty.dll")); err != nil {
+		t.Skipf("no conpty.dll in %s", dir)
+	}
+	useConPTY(t, dir)
+}
+
 // useConPTY makes the tests that follow run in the ConPTY MYGO_CONPTY names,
 // "system" being Windows' own.
 func useConPTY(t *testing.T, dir string) {
@@ -100,6 +114,7 @@ func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
 // terminal hears nothing of the wheel, which then comes back as alternate
 // scroll, as arrow keys.
 func TestConPTYForwardsMouse(t *testing.T) {
+	useShippedConPTY(t)
 	exe, err := os.Executable()
 	if err != nil {
 		t.Skip("the test executable is not known")
@@ -169,6 +184,7 @@ func TestHelperProcess(t *testing.T) {
 // answer to itself, the program hearing nothing; the ConPTY this package
 // carries passes it on.
 func TestConPTYPassesTheReply(t *testing.T) {
+	useShippedConPTY(t)
 	if !conpty().passesReplies {
 		t.Skip("this build runs in Windows' own console, which drops what the terminal writes")
 	}
@@ -216,46 +232,4 @@ func TestConPTYPassesTheReply(t *testing.T) {
 	wait.Until(t, "the program reading the answer", func() bool {
 		return strings.Contains(since(n), "heard:\"\\x1b]11;rgb:0c0c/0c0c/0c0c\\a\"")
 	})
-}
-
-// TestWriteFilesLeavesWhatIsThere pins the unpacking: a file of the bytes
-// carried here is left alone, one of the same size but other bytes is written
-// again, and one that is missing is written.
-func TestWriteFilesLeavesWhatIsThere(t *testing.T) {
-	dir := t.TempDir()
-	files := map[string][]byte{
-		"conpty.dll":      []byte("dll"),
-		"OpenConsole.exe": []byte("exe"),
-	}
-	if err := writeFiles(dir, files); err != nil {
-		t.Fatal(err)
-	}
-	for name, want := range files {
-		got, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(want) {
-			t.Errorf("%s holds %q, want %q", name, got, want)
-		}
-	}
-	// The same bytes: untouched, so the time it was written stays.
-	kept := filepath.Join(dir, "conpty.dll")
-	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-	if err := os.Chtimes(kept, old, old); err != nil {
-		t.Fatal(err)
-	}
-	// The same size, other bytes: written again, where a size check would keep it.
-	if err := os.WriteFile(filepath.Join(dir, "OpenConsole.exe"), []byte("XXX"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFiles(dir, files); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(kept); err != nil || !info.ModTime().Equal(old) {
-		t.Error("the file of the same bytes was written again")
-	}
-	if got, err := os.ReadFile(filepath.Join(dir, "OpenConsole.exe")); err != nil || string(got) != "exe" {
-		t.Errorf("the file of other bytes holds %q, want the bytes carried here", got)
-	}
 }
