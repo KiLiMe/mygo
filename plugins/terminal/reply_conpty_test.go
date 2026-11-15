@@ -21,7 +21,7 @@ func TestWriteReply(t *testing.T) {
 	direct := &Terminal{}
 	direct.writeReply(batch)
 	got := queuedReplies(direct)
-	if pty.KeepsReplies() {
+	if !pty.PassesReplies() {
 		if len(got) != 0 {
 			t.Errorf("writeReply behind Windows' own ConPTY queued %q, want nothing", got)
 		}

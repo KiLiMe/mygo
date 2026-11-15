@@ -49,7 +49,7 @@ type sys struct {
 }
 
 // startConsole makes the console the terminal reads and writes through, and
-// returns the ConPTY it was made in: the one this package carries answers
+// returns the ConPTY it was made in: a console other than Windows' own answers
 // nothing when the OpenConsole.exe beside it can't start there, and Windows'
 // own console is then the next best thing.
 func startConsole(cp conPTY, cols, rows int, in, out syscall.Handle) (uintptr, conPTY, error) {
@@ -141,15 +141,15 @@ func (p *PTY) spawn(o Options) error {
 	}
 	syscall.CloseHandle(pi.Thread)
 	p.process, p.pid = pi.Process, int(pi.ProcessId)
-	if p.conpty.own() {
+	if p.conpty.needsVTInput {
 		enableVTInput(p.pid)
 	}
 	return nil
 }
 
 // enableVTInput turns on virtual terminal input in the console the program just
-// got, which Windows' own ConPTY needs: the one from Windows Terminal passes
-// what a program asks for on its first frame as it is.
+// got, for a console that needs it: the one from Windows Terminal passes what a
+// program asks for on its first frame as it is, and says so in needsVTInput.
 //
 // conhost hands on the mouse modes a program asks for only while that bit is
 // already on, and keeps them otherwise. pi asks for the mouse while bun has not
