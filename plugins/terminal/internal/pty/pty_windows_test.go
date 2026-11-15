@@ -35,13 +35,12 @@ func useShippedConPTY(t *testing.T) {
 // "system" being Windows' own.
 func useConPTY(t *testing.T, dir string) {
 	t.Setenv("MYGO_CONPTY", dir)
-	t.Cleanup(func() {
-		conptyOnce = &sync.Once{}
-		conptyChosen = conPTY{}
-	})
-	conptyOnce = &sync.Once{}
-	conptyChosen = conPTY{}
+	forgetConPTY()
+	t.Cleanup(forgetConPTY)
 }
+
+// forgetConPTY drops the choice, which the environment has just changed.
+func forgetConPTY() { chosenConPTY = sync.OnceValue(chooseConPTY) }
 
 // TestConPTYClearScreen clears the screen of PowerShell, whose prompt sat
 // on the console's last row: the console repaints it on the first, which

@@ -45,20 +45,6 @@ func (c conPTY) own() bool { return c.create == systemConPTY.create }
 // hands them on as they are.
 func PassesReplies() bool { return conpty().passesReplies }
 
-// ConPTYInfo says which ConPTY terminals are made in.
-type ConPTYInfo struct {
-	// Path is the conpty.dll in use, empty when it is Windows' own in kernel32.
-	Path string
-	// Reason says why Windows' own is used, when it is.
-	Reason string
-}
-
-// ConPTY returns which ConPTY terminals are made in.
-func ConPTY() ConPTYInfo {
-	conpty()
-	return conptyInfo
-}
-
 // bundledConPTY returns the ConPTY of the conpty.dll in dir, when it and the
 // OpenConsole.exe it runs are there and it loads.
 func bundledConPTY(dir string) (conPTY, bool) {
@@ -83,6 +69,17 @@ func bundledConPTY(dir string) (conPTY, bool) {
 	return c, true
 }
 
+// chosen is the ConPTY terminals are made in, and what it is.
+type chosen struct {
+	console conPTY
+	info    ConPTYInfo
+}
+
+var chosenConPTY = sync.OnceValue(chooseConPTY)
+
+// ConPTY returns which ConPTY terminals are made in.
+func ConPTY() ConPTYInfo { return chosenConPTY().info }
+
 // conpty returns the ConPTY terminals are made in: the one the app ships beside
 // itself, else Windows' own.
 //
@@ -92,44 +89,42 @@ func bundledConPTY(dir string) (conPTY, bool) {
 // mouse on its first frame, and heard neither, the wheel arriving as arrow
 // keys. The console Windows Terminal runs passes both on whatever the mode, and
 // an app that ships it gets it here.
-func conpty() conPTY {
-	conptyOnce.Do(func() { conptyChosen, conptyInfo = chooseConPTY() })
-	return conptyChosen
-}
-
-var (
-	conptyOnce   = &sync.Once{}
-	conptyChosen conPTY
-	conptyInfo   ConPTYInfo
-)
+func conpty() conPTY { return chosenConPTY().console }
 
 // chooseConPTY takes the ConPTY of MYGO_CONPTY, then the one beside the
 // executable, then Windows' own, and says which it took and why.
-func chooseConPTY() (conPTY, ConPTYInfo) {
-	var reason string
-	if dir := os.Getenv("MYGO_CONPTY"); dir != "" {
-		if dir == "system" {
-			return systemConPTY, ConPTYInfo{Reason: "MYGO_CONPTY=system"}
-		}
-		if c, ok := bundledConPTY(dir); ok {
-			return c, ConPTYInfo{Path: filepath.Join(dir, "conpty.dll")}
-		}
-		reason = "MYGO_CONPTY=" + dir + " has no conpty.dll that loads"
+func chooseConPTY() chosen {
+	named := os.Getenv("MYGO_CONPTY")
+	if named == "system" {
+		return chosen{systemConPTY, ConPTYInfo{Reason: "MYGO_CONPTY=system"}}
 	}
-	if exe, err := os.Executable(); err == nil {
-		if real, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = real
-		}
-		dir := filepath.Dir(exe)
-		if c, ok := bundledConPTY(dir); ok {
-			return c, ConPTYInfo{Path: filepath.Join(dir, "conpty.dll")}
-		}
-		if reason == "" {
-			reason = "no conpty.dll that loads beside " + dir
+	if named != "" {
+		if c, ok := bundledConPTY(named); ok {
+			return chosen{c, ConPTYInfo{Path: filepath.Join(named, "conpty.dll")}}
 		}
 	}
-	if reason == "" {
-		reason = "the executable's directory is unknown"
+	exe, err := os.Executable()
+	if err != nil {
+		return chosen{systemConPTY, ConPTYInfo{Reason: whyNot(named, "")}}
 	}
-	return systemConPTY, ConPTYInfo{Reason: reason}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	dir := filepath.Dir(exe)
+	if c, ok := bundledConPTY(dir); ok {
+		return chosen{c, ConPTYInfo{Path: filepath.Join(dir, "conpty.dll")}}
+	}
+	return chosen{systemConPTY, ConPTYInfo{Reason: whyNot(named, dir)}}
+}
+
+// whyNot says why Windows' own console is used: what MYGO_CONPTY named and
+// could not load, before what is not beside the executable.
+func whyNot(named, dir string) string {
+	switch {
+	case named != "":
+		return "MYGO_CONPTY=" + named + " has no conpty.dll that loads"
+	case dir == "":
+		return "the executable's directory is unknown"
+	}
+	return "no conpty.dll that loads beside " + dir
 }
