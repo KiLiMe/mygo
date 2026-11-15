@@ -20,6 +20,16 @@ var systemConPTY = conPTY{
 	close:  procClosePseudoConsole,
 }
 
+// own reports whether this is Windows' own console, the one in kernel32.
+func (c conPTY) own() bool { return c.create == systemConPTY.create }
+
+// KeepsReplies reports whether the console between the terminal and the program
+// keeps to itself what the terminal writes into the program's input. Windows'
+// own ConPTY does: it answers a query itself, and holds or drops replies, or
+// hands the program their tails, as typing. The ConPTY this package carries
+// hands them on as they are.
+func KeepsReplies() bool { return conpty().own() }
+
 // bundledConPTY returns the ConPTY of the conpty.dll in dir, when it and the
 // OpenConsole.exe it runs are there and it loads.
 func bundledConPTY(dir string) (conPTY, bool) {

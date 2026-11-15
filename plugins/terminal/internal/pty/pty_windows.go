@@ -48,13 +48,21 @@ type sys struct {
 	pid     int
 }
 
-// conPTY returns the ConPTY this terminal is made in: the one start chose, or
-// Windows' own before one starts.
-func (p *PTY) conPTY() conPTY {
-	if p.conpty.create == nil {
-		return systemConPTY
+// startConsole makes the console the terminal reads and writes through, and
+// returns the ConPTY it was made in: the one this package carries answers
+// nothing when the OpenConsole.exe beside it can't start there, and Windows'
+// own console is then the next best thing.
+func startConsole(cp conPTY, cols, rows int, in, out syscall.Handle) (uintptr, conPTY, error) {
+	var console uintptr
+	r, _, _ := cp.create.Call(coord(cols, rows), uintptr(in), uintptr(out), 0, uintptr(unsafe.Pointer(&console)))
+	if r != 0 && !cp.own() {
+		cp, console = systemConPTY, 0
+		r, _, _ = cp.create.Call(coord(cols, rows), uintptr(in), uintptr(out), 0, uintptr(unsafe.Pointer(&console)))
 	}
-	return p.conpty
+	if r != 0 {
+		return 0, cp, syscall.Errno(r & 0xFFFF)
+	}
+	return console, cp, nil
 }
 
 func (p *PTY) start(o Options) error {
@@ -73,22 +81,14 @@ func (p *PTY) start(o Options) error {
 		syscall.CloseHandle(inW)
 		return fmt.Errorf("pty: %w", err)
 	}
-	var console uintptr
-	r, _, _ := cp.create.Call(coord(o.Cols, o.Rows), uintptr(inR), uintptr(outW), 0, uintptr(unsafe.Pointer(&console)))
-	if r != 0 && cp.create != systemConPTY.create {
-		// The ConPTY this package carries answers nothing when the
-		// OpenConsole.exe beside it can't start there: Windows' own
-		// console is the next best thing.
-		cp = systemConPTY
-		r, _, _ = cp.create.Call(coord(o.Cols, o.Rows), uintptr(inR), uintptr(outW), 0, uintptr(unsafe.Pointer(&console)))
-	}
+	console, cp, err := startConsole(cp, o.Cols, o.Rows, inR, outW)
 	// The console has its own copies of its ends.
 	syscall.CloseHandle(inR)
 	syscall.CloseHandle(outW)
-	if r != 0 {
+	if err != nil {
 		syscall.CloseHandle(inW)
 		syscall.CloseHandle(outR)
-		return fmt.Errorf("pty: CreatePseudoConsole: %w", syscall.Errno(r&0xFFFF))
+		return fmt.Errorf("pty: CreatePseudoConsole: %w", err)
 	}
 	p.conpty = cp
 	p.console = console
@@ -141,7 +141,7 @@ func (p *PTY) spawn(o Options) error {
 	}
 	syscall.CloseHandle(pi.Thread)
 	p.process, p.pid = pi.Process, int(pi.ProcessId)
-	if p.conPTY().create == systemConPTY.create {
+	if p.conpty.own() {
 		enableVTInput(p.pid)
 	}
 	return nil
@@ -217,7 +217,7 @@ func (p *PTY) Resize(cols, rows, width, height int) error {
 	if p.console == 0 {
 		return ErrClosed
 	}
-	if r, _, _ := p.conPTY().resize.Call(p.console, coord(cols, rows)); r != 0 {
+	if r, _, _ := p.conpty.resize.Call(p.console, coord(cols, rows)); r != 0 {
 		return fmt.Errorf("pty: ResizePseudoConsole: %w", syscall.Errno(r&0xFFFF))
 	}
 	return nil
@@ -238,7 +238,7 @@ func (p *PTY) ClearScreen() error {
 	if p.console == 0 {
 		return nil
 	}
-	if clear := p.conPTY().clear; clear != nil {
+	if clear := p.conpty.clear; clear != nil {
 		if r, _, _ := clear.Call(p.console); r != 0 {
 			return fmt.Errorf("pty: ClearPseudoConsole: %w", syscall.Errno(r&0xFFFF))
 		}
@@ -297,7 +297,7 @@ func (p *PTY) Close() error {
 	// ClosePseudoConsole waits for the output to be read on Windows
 	// before 11 24H2: Read keeps reading meanwhile, until the end of the
 	// output, then the pipe goes.
-	closeConsole := p.conPTY().close
+	closeConsole := p.conpty.close
 	go func() {
 		closeConsole.Call(console)
 		p.out.Close()
