@@ -168,7 +168,7 @@ func TestHelperProcess(t *testing.T) {
 // answer to itself, the program hearing nothing; the ConPTY this package
 // carries passes it on.
 func TestConPTYPassesTheReply(t *testing.T) {
-	if conpty().create == systemConPTY.create {
+	if conpty().own() {
 		t.Skip("this build runs in Windows' own console, which drops what the terminal writes")
 	}
 	exe, err := os.Executable()
