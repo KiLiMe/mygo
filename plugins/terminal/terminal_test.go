@@ -1852,6 +1852,45 @@ func TestSetLinksOff(t *testing.T) {
 	}
 }
 
+// TestClickOpensLinksWithoutCommand: a plain click on a link opens it, a URL
+// and a path alike, while a press on one dragged off its cell is a selection,
+// which is how a URL in the scrollback is taken.
+func TestClickOpensLinksWithoutCommand(t *testing.T) {
+	loadLib(t)
+	var opened []string
+	term, err := New(Options{Conn: newPipe(), OpenLink: func(link string) bool {
+		opened = append(opened, link)
+		return true
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.Feed([]byte("see src/app.go:12 and https://x.org\r\nplain words"))
+	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+	tt.Frame()
+	for _, col := range []int{6, 25} {
+		x, y := cellCenter(term, col, 0)
+		tt.ClickAt(x, y)
+	}
+	if want := []string{"src/app.go:12", "https://x.org"}; !slices.Equal(opened, want) {
+		t.Errorf("opened %q, want %q", opened, want)
+	}
+	// A drag from a link takes it as a selection and opens nothing.
+	opened = nil
+	x0, y := cellCenter(term, 25, 0)
+	x1, _ := cellCenter(term, 32, 0)
+	tt.Press(x0, y)
+	tt.Move(x1, y)
+	tt.Release(x1, y)
+	if len(opened) != 0 {
+		t.Errorf("opened %q dragging off a link, want a selection", opened)
+	}
+	if _, ok := term.term.SelectionText(); !ok {
+		t.Error("no selection after dragging over a link")
+	}
+}
+
 func TestCommandClickLinkWithoutOpenLink(t *testing.T) {
 	loadLib(t)
 	conn := newPipe()

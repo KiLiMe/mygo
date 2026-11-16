@@ -229,6 +229,10 @@ type view struct {
 	hoverLink string
 	hoverPath bool
 	linkPress bool
+	// arm is the link a plain press landed on, and the cell it landed on:
+	// let go of on that cell it opens, dragged off it the press was a
+	// selection instead.
+	arm linkArm
 	// pointerAt is the pointer over the grid (pointerShape); tracking whether
 	// the program took the mouse as of the last frame, and modeShape the
 	// shape that taking or leaving it showed, while the program's shape
@@ -1187,6 +1191,14 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 		v.gesture = g
 	}
 	col, row := v.cellAt(ev.X, ev.Y)
+	if ev.Kind == ui.InputPointerDown && ev.Button == 0 {
+		// A press on a link without Command is armed, not spent: let go
+		// of on that same cell it opens the link, while a drag off that
+		// cell selects, as a press anywhere else does.
+		if link, path, _ := v.linkHere(ev.X, ev.Y); link != "" {
+			v.arm = linkArm{link: link, path: path, col: col, row: row}
+		}
+	}
 	px, py := float64(ev.X*v.scale), float64(ev.Y*v.scale)
 	switch ev.Kind {
 	case ui.InputPointerDown:
@@ -1218,6 +1230,9 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 		}
 		return true
 	case ui.InputPointerMove:
+		if v.arm.on() && (col != v.arm.col || row != v.arm.row) {
+			v.arm = linkArm{}
+		}
 		if !v.selecting {
 			return false
 		}
@@ -1239,6 +1254,8 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 		if !v.selecting || ev.Button != 0 {
 			return false
 		}
+		arm := v.arm
+		v.arm = linkArm{}
 		v.selecting, v.ticking = false, false
 		ref, ok := t.term.CellAt(col, row)
 		if v.extending {
@@ -1247,6 +1264,14 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 			v.gesture.Release(t.term, &ref)
 		} else {
 			v.gesture.Release(t.term, nil)
+		}
+		if arm.on() && arm.col == col && arm.row == row {
+			// The press stayed on the cell it landed on: a click on the
+			// link, which keeps no selection and copies nothing.
+			t.term.SetSelection(nil)
+			v.opening, v.openingPath = arm.link, arm.path
+			v.services.Invalidate()
+			return true
 		}
 		if t.opts.CopyOnSelect == CopyOnSelectClipboard {
 			if text, ok := t.term.SelectionText(); ok {
@@ -1262,6 +1287,17 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 // up to column x1 of row last, over the rows between in full, as a link
 // soft-wraps from one row onto the next; the zero span is no link.
 type linkSpan struct{ row, x0, x1, last int }
+
+// linkArm is the link a press without Command landed on, and the cell it
+// landed on.
+type linkArm struct {
+	link     string
+	path     bool
+	col, row int
+}
+
+// on reports whether a press landed on a link.
+func (a linkArm) on() bool { return a.link != "" }
 
 func (s linkSpan) on() bool { return s.last > s.row || s.x1 > s.x0 }
 
@@ -1321,11 +1357,21 @@ func (t *Terminal) HoveredLink() (link string, path bool, at ui.Rect) {
 	}
 }
 
-// linkUnder is the link a click with mods at (x, y) opens, whether it is
-// a file path, and its cells: none without Command, with links off, or while
-// the primary button selects or the program has a press; t.mu is held.
+// linkUnder is the link Command over (x, y) underlines and a Command+click
+// opens, whether it is a file path, and its cells: none without Command;
+// t.mu is held.
 func (v *view) linkUnder(mods ui.Modifiers, x, y float32) (link string, path bool, at linkSpan) {
-	if v.t.noLinks || mods&ui.Cmd == 0 || v.selecting || v.reporting || v.cellW == 0 || v.overScrollbar(x, y) {
+	if mods&ui.Cmd == 0 {
+		return "", false, linkSpan{}
+	}
+	return v.linkHere(x, y)
+}
+
+// linkHere is the link at (x, y), which a click opens with or without
+// Command: none with links off, or while the primary button selects or the
+// program has a press; t.mu is held.
+func (v *view) linkHere(x, y float32) (link string, path bool, at linkSpan) {
+	if v.t.noLinks || v.selecting || v.reporting || v.cellW == 0 || v.overScrollbar(x, y) {
 		return "", false, linkSpan{}
 	}
 	return v.linkAt(v.cellAt(x, y))
