@@ -83,6 +83,16 @@ func TestPathAt(t *testing.T) {
 		{`printf %s\t%s`, 9, ""},
 		{`grep \d+ file`, 6, ""},
 		{`\section intro`, 3, ""},
+		// A version is a word, not a file: the kind comes after the last dot.
+		{"built OpenConsole.exe for it", 10, "OpenConsole.exe"},
+		{"the exe is OpenConsole.exe-amd64", 14, ""},
+		{"powershell-7.6.8-amd64 has no build", 5, ""},
+		{"go1.27.3 is installed", 3, ""},
+		{"tag v0.3.4 was cut", 6, ""},
+		{"helium-0.21.3.1-amd64 moved", 5, ""},
+		{"module mygo@v0.9.1-amd64 pinned", 10, ""},
+		{"unpack wt-go-x86_64-pc-windows-amd64.exe now", 10, "wt-go-x86_64-pc-windows-amd64.exe"},
+		{"unpack foo.tar.gz", 9, "foo.tar.gz"},
 	} {
 		text := []rune(c.row)
 		cols := make([]int, len(text))

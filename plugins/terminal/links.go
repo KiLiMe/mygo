@@ -85,6 +85,11 @@ func pathAt(text []rune, cols []int, col int) (path string, x0, x1 int) {
 			continue
 		}
 		for _, n := range pathInToken.FindAllStringIndex(tok, -1) {
+			// A match touching a word on either side is a piece of that
+			// word, not a path of its own.
+			if n[0] > 0 && wordByte(tok[n[0]-1]) || n[1] < len(tok) && wordByte(tok[n[1]]) {
+				continue
+			}
 			if p, a, b := pathOf(tok[n[0]:n[1]]); p != "" {
 				if x0, x1, ok := span(m[0]+n[0]+a, m[0]+n[0]+b); ok {
 					return p, x0, x1
@@ -123,7 +128,34 @@ func quotedAt(s string, i int) (a, b int) {
 
 // isAlnum reports whether c is an ASCII letter or digit.
 func isAlnum(c byte) bool {
-	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9'
+	return isLetter(c) || '0' <= c && c <= '9'
+}
+
+func isLetter(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+}
+
+// kind reports whether s, what follows the last dot of a name, reads as the
+// kind of file a program prints: a letter, then letters or digits, short. A
+// version is not one, and neither is a platform: the 8 of 7.6.8 and the
+// exe-amd64 of OpenConsole.exe-amd64 are numbers and hyphens, and a click on
+// them would look for a file that is not there.
+func kind(s string) bool {
+	if len(s) == 0 || len(s) > 8 || !isLetter(s[0]) {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if !isAlnum(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// wordByte reports whether c continues a word, so that a path found inside a
+// token must not touch one: the name in OpenConsole.exe-amd64 ends at -amd64.
+func wordByte(c byte) bool {
+	return isAlnum(c) || c == '-' || c == '_' || c == '@' || c == '+'
 }
 
 // pathOf returns the path a token of pathToken, or a quoted run, prints,
@@ -186,15 +218,16 @@ func pathOf(tok string) (path string, a, b int) {
 		strings.IndexFunc(name, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
 		return "", 0, 0
 	}
-	// Words are not paths: a name without a slash takes a letter, and an
-	// extension or a line, so that version 1.2.3 and 12:30 are neither.
+	// Words are not paths: a name without a separator takes a letter, and a
+	// file kind after its last dot or a line, so that version 1.2.3, 12:30
+	// and OpenConsole.exe-amd64 are none.
 	separators := "/"
 	if windowsPath.MatchString(name) {
 		separators = `/\`
 	}
 	if !strings.ContainsAny(name, separators) {
 		dot := strings.LastIndexByte(name, '.')
-		if strings.IndexFunc(name, unicode.IsLetter) < 0 || line == 0 && (dot < 0 || dot == len(name)-1) {
+		if strings.IndexFunc(name, unicode.IsLetter) < 0 || line == 0 && (dot < 0 || !kind(name[dot+1:])) {
 			return "", 0, 0
 		}
 	}
