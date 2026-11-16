@@ -1808,6 +1808,50 @@ func TestCommandHoverFilePath(t *testing.T) {
 // opens hyperlinks of any scheme, paths are no links, the pointer is a hand
 // over a link while Command is held, and a click on a link goes before a
 // program that takes the mouse, its release too.
+// TestSetLinksOff: with links off nothing is a link -- no underline under
+// the pointer, no hand cursor, and a Command+click opens nothing, a URL and a
+// path alike. Turned on again, the same cells are a link.
+func TestSetLinksOff(t *testing.T) {
+	loadLib(t)
+	var opened []string
+	term, err := New(Options{Conn: newPipe(), OpenLink: func(link string) bool {
+		opened = append(opened, link)
+		return true
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.SetLinks(false)
+	term.Feed([]byte("src/app.go:12 https://x.org"))
+	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+	tt.Frame()
+	x, y := cellCenter(term, 6, 0)
+	tt.Move(x, y)
+	tt.HoldModifiers(ui.Cmd)
+	if h := term.v.hover; h.on() {
+		t.Errorf("hovered %+v with links off, want nothing", h)
+	}
+	if c := tt.Cursor(); c == ui.CursorPointer {
+		t.Error("the pointer is over a link with links off")
+	}
+	if link, _, _ := term.HoveredLink(); link != "" {
+		t.Errorf("HoveredLink is %q with links off", link)
+	}
+	tt.HoldModifiers(0)
+	tt.ClickAtWith(ui.Cmd, x, y)
+	if len(opened) != 0 {
+		t.Errorf("opened %q with links off", opened)
+	}
+	term.SetLinks(true)
+	tt.Frame()
+	tt.Move(x, y)
+	tt.HoldModifiers(ui.Cmd)
+	if h := term.v.hover; !h.on() {
+		t.Error("no link under the pointer with links on again")
+	}
+}
+
 func TestCommandClickLinkWithoutOpenLink(t *testing.T) {
 	loadLib(t)
 	conn := newPipe()
