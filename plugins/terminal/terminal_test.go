@@ -1804,12 +1804,44 @@ func TestCommandHoverFilePath(t *testing.T) {
 	}
 }
 
-// TestCommandClickLinkWithoutOpenLink: without Options.OpenLink, the system
-// opens hyperlinks of any scheme, paths are no links, the pointer is a hand
-// over a link while Command is held, and a click on a link goes before a
-// program that takes the mouse, its release too.
+// TestLinkHoverHintWithoutCommand: with the hover hint on, the pointer
+// underlines a link with no modifier held, Windows Terminal's way; off, the
+// modifier is what shows it, and a click opens a link either way.
+func TestLinkHoverHintWithoutCommand(t *testing.T) {
+	loadLib(t)
+	term, err := New(Options{Conn: newPipe(), OpenLink: func(string) bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.SetLinkHoverHint(true)
+	term.Feed([]byte("see https://x.org/a\r\n"))
+	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+	tt.Frame()
+	plain := slices.Clone(tt.Image().Pix)
+	x, y := cellCenter(term, 8, 0)
+	tt.Move(x, y)
+	if _, _, at := term.HoveredLink(); !at.Contains(x, y) {
+		t.Errorf("HoveredLink %+v on hover alone, want the URL", at)
+	}
+	if tt.Cursor() != ui.CursorPointer {
+		t.Error("hovering a link did not show a hand")
+	}
+	if bytes.Equal(plain, tt.Image().Pix) {
+		t.Error("hovering a link did not paint its underline")
+	}
+	term.SetLinkHoverHint(false)
+	tt.Frame()
+	if h := term.v.hover; h.on() {
+		t.Errorf("hovered %+v with the hint off, want none", h)
+	}
+	if !bytes.Equal(plain, tt.Image().Pix) {
+		t.Error("the hint off did not remove the underline")
+	}
+}
+
 // TestSetLinksOff: with links off nothing is a link -- no underline under
-// the pointer, no hand cursor, and a Command+click opens nothing, a URL and a
+// the pointer, no hand cursor, and a click opens nothing, a URL and a
 // path alike. Turned on again, the same cells are a link.
 func TestSetLinksOff(t *testing.T) {
 	loadLib(t)
@@ -1891,6 +1923,10 @@ func TestClickOpensLinksWithoutCommand(t *testing.T) {
 	}
 }
 
+// TestCommandClickLinkWithoutOpenLink: without Options.OpenLink, the system
+// opens hyperlinks of any scheme, paths are no links, the pointer is a hand
+// over a link while the hint is shown, and a click on a link goes before a
+// program that takes the mouse, its release too.
 func TestCommandClickLinkWithoutOpenLink(t *testing.T) {
 	loadLib(t)
 	conn := newPipe()
