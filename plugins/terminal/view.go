@@ -1318,10 +1318,10 @@ func (t *Terminal) HoveredLink() (link string, path bool, at ui.Rect) {
 }
 
 // linkUnder is the link a click with mods at (x, y) opens, whether it is
-// a file path, and its cells: none without Command, or while the primary
-// button selects or the program has a press; t.mu is held.
+// a file path, and its cells: none without Command, with links off, or while
+// the primary button selects or the program has a press; t.mu is held.
 func (v *view) linkUnder(mods ui.Modifiers, x, y float32) (link string, path bool, at linkSpan) {
-	if mods&ui.Cmd == 0 || v.selecting || v.reporting || v.cellW == 0 || v.overScrollbar(x, y) {
+	if v.t.noLinks || mods&ui.Cmd == 0 || v.selecting || v.reporting || v.cellW == 0 || v.overScrollbar(x, y) {
 		return "", false, linkSpan{}
 	}
 	return v.linkAt(v.cellAt(x, y))

@@ -531,6 +531,11 @@ type Terminal struct {
 	prompt   promptTracker
 	shellDir string
 
+	// noLinks is whether a link is dead: the pointer underlines none, and a
+	// Command+click opens none. Inverted so that a Terminal made without New
+	// still finds its links.
+	noLinks bool
+
 	// clipForward are reads of the clipboard for a Mirror to pass on, with
 	// ClipboardForward: whether each is of the primary selection. The
 	// first Mirror to frame takes them, as one terminal answers a read.
@@ -1020,6 +1025,16 @@ func (t *Terminal) SetCopyOnSelect(c CopyOnSelect) {
 	t.mu.Lock()
 	t.opts.CopyOnSelect = c
 	t.mu.Unlock()
+}
+
+// SetLinks is whether a link in the terminal is live: off, the pointer does
+// not underline one and a Command+click opens none -- a path a program
+// printed, a URL, or a hyperlink it set. The next frame shows it.
+func (t *Terminal) SetLinks(on bool) {
+	t.mu.Lock()
+	t.noLinks = !on
+	t.mu.Unlock()
+	t.redraw()
 }
 
 // SetScrollMultiplier changes how far the wheel and the touchpad scroll,
