@@ -1353,11 +1353,11 @@ func (t *Terminal) HoveredLink() (link string, path bool, at ui.Rect) {
 	}
 }
 
-// linkUnder is the link Command over (x, y) underlines and a Command+click
-// opens, whether it is a file path, and its cells: none without Command;
+// linkUnder is the link the pointer underlines and a click opens, whether it is
+// a file path, and its cells: none without the modifier unless hoverHint is on;
 // t.mu is held.
 func (v *view) linkUnder(mods ui.Modifiers, x, y float32) (link string, path bool, at linkSpan) {
-	if mods&ui.Cmd == 0 {
+	if mods&ui.Cmd == 0 && !v.t.hoverHint {
 		return "", false, linkSpan{}
 	}
 	return v.linkHere(x, y)
