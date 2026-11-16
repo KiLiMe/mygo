@@ -1400,7 +1400,18 @@ func fileURLPath(s string) string {
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
 		rest = rest[i:]
 	}
-	return unescapePath(rest)
+	rest = unescapePath(rest)
+	// A drive is no directory named C:, so the slash a file URL puts before
+	// it is dropped where drives exist, and kept where the path really does
+	// start with a slash.
+	if runtime.GOOS == "windows" && len(rest) >= 3 && rest[0] == '/' && rest[2] == ':' && isASCIILetter(rest[1]) {
+		rest = rest[1:]
+	}
+	return rest
+}
+
+func isASCIILetter(b byte) bool {
+	return 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z'
 }
 
 func unescapePath(s string) string {
