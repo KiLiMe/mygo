@@ -1179,6 +1179,20 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 		v.opening, v.openingPath, v.linkPress = link, path, true
 		return true
 	}
+	if t.opts.RightClickCopyPastePriority && ev.Button == 1 {
+		switch t.opts.RightClick {
+		case RightClickCopyOrPaste, RightClickCopy, RightClickPaste:
+			// Keep both ends of the click local so the program never gets
+			// a release without a press, even during another button's drag.
+			switch ev.Kind {
+			case ui.InputPointerDown:
+				v.rightClick = t.opts.RightClick
+				return true
+			case ui.InputPointerUp:
+				return true
+			}
+		}
+	}
 	tracking := t.term.MouseTracking() && ev.Mods&ui.Shift == 0
 	if tracking && !v.selecting || v.reporting {
 		return v.report(ev)

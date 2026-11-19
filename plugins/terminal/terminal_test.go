@@ -1030,6 +1030,59 @@ func TestCopyAndPasteKeys(t *testing.T) {
 	}
 }
 
+func TestRightClickCopyPastePriority(t *testing.T) {
+	loadLib(t)
+	for _, tc := range []struct {
+		name     string
+		action   RightClickAction
+		priority bool
+		wantCopy bool
+		wantIn   string
+	}{
+		{"disabled", RightClickCopyOrPaste, false, false, "\x1b[<2;2;1M\x1b[<2;2;1m"},
+		{"copy or paste", RightClickCopyOrPaste, true, true, "some text"},
+		{"copy", RightClickCopy, true, true, ""},
+		{"paste", RightClickPaste, true, false, "clipboard"},
+		{"menu", RightClickContextMenu, true, false, "\x1b[<2;2;1M\x1b[<2;2;1m"},
+		{"ignore", RightClickIgnore, true, false, "\x1b[<2;2;1M\x1b[<2;2;1m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := newPipe()
+			term, err := New(Options{Conn: conn, RightClick: tc.action, RightClickCopyPastePriority: tc.priority})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer term.Close()
+			term.Feed([]byte("some text\x1b[?1002h\x1b[?1006h"))
+			tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+			tt.SetClipboard("clipboard")
+			x, y := cellCenter(term, 1, 0)
+			if tc.wantCopy {
+				tt.Command("selectAll")
+				tt.RightClickAt(x, y)
+				if got := tt.Clipboard(); got != "some text" {
+					t.Errorf("right click with a selection copied %q", got)
+				}
+				if got := conn.take(term); got != "" {
+					t.Errorf("right click with a selection sent %q", got)
+				}
+			}
+			tt.RightClickAt(x, y)
+			if got := conn.take(term); got != tc.wantIn {
+				t.Errorf("right click without a selection sent %q, want %q", got, tc.wantIn)
+			}
+			if menu := tt.Menu(); menu != nil {
+				t.Errorf("right click showed the menu %q", menu)
+			}
+			tt.Press(x, y)
+			tt.Release(x, y)
+			if got, want := conn.take(term), "\x1b[<0;2;1M\x1b[<0;2;1m"; got != want {
+				t.Errorf("left click sent %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestUnboundKeys: keys bound to ActionNone reach the program, as do
 // Control-C and -V outside Windows, and a secondary click shows the menu.
 func TestUnboundKeys(t *testing.T) {
