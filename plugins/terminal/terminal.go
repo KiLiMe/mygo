@@ -160,8 +160,12 @@ type Options struct {
 	NoDefaultKeybinds bool
 	// RightClick is what a secondary click does, as Ghostty's
 	// right-click-action: show the context menu when zero. A program that
-	// takes the mouse gets the click instead, unless Shift is held.
+	// takes the mouse gets the click instead, unless Shift is held or
+	// RightClickCopyPastePriority applies.
 	RightClick RightClickAction
+	// RightClickCopyPastePriority keeps secondary clicks for terminal copy
+	// and paste actions while the program has mouse reporting enabled.
+	RightClickCopyPastePriority bool
 	// NoClipboardWrite keeps programs from writing to the clipboard (OSC
 	// 52, OSC 5522), as Ghostty's clipboard-write = deny. Writes go
 	// through unless it is set; reads are governed by ClipboardRead.
