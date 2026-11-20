@@ -132,7 +132,7 @@ type window struct {
 	bgBrush     uintptr
 	bg          *platform.Color
 	vibrancy    string
-	glass       margins // the frame's extension under the material
+	glass       margins // the frame's extension over the client area (extendFrame)
 	shadow      bool
 	ignoreMouse bool
 	// inputRegion is SetInputRegion's (input_region.go), nil for none;
@@ -255,9 +255,6 @@ func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler)
 	if o.BackgroundColor != nil {
 		w.SetBackgroundColor(*o.BackgroundColor)
 	}
-	if w.captionless() && w.shadow && o.Flyout == nil {
-		w.SetHasShadow(true)
-	}
 	if w.captionless() {
 		w.plainCaption()
 	}
@@ -272,6 +269,9 @@ func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler)
 		}
 	}
 	b.applyWindowTheme(w)
+	if w.captionless() {
+		w.extendFrame(false)
+	}
 	if o.Vibrancy != "" {
 		w.SetVibrancy(o.Vibrancy)
 	}
@@ -464,7 +464,7 @@ func (w *window) addFrame(r *rect, menu uintptr, dpi int) {
 	}
 	procAdjustWindowRectExForDpi.Call(uintptr(unsafe.Pointer(r)), style, menu, ex, uintptr(dpi))
 	if captionless {
-		r.Top = top
+		r.Top = top - w.topLine()
 		if w.hiddenTitleBar && windows11() {
 			r.Top--
 		}
@@ -725,6 +725,8 @@ func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
 		if w.captionless() && wp != 0 && !w.fullScreen {
 			return w.frameCalcSize(wp, lp), true
 		}
+	case wmPaint:
+		return 0, w.paintTopBorder()
 	case wmEraseBkgnd:
 		brush := w.bgBrush
 		if w.surface != nil && w.surface.bgBrush != 0 {
@@ -736,6 +738,7 @@ func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
 		if brush != 0 && w.vibrancy == "" {
 			var r rect
 			procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&r)))
+			r.Top += w.topLine() // above it, the frame draws the line of the border
 			procFillRect.Call(wp, uintptr(unsafe.Pointer(&r)), brush)
 		}
 		return 1, true
@@ -810,8 +813,8 @@ func (w *window) sized(kind uintptr) {
 	if kind != sizeMinimized {
 		w.layoutControls()
 	}
-	if w.vibrancy != "" && kind != sizeMinimized {
-		w.extendGlass(false)
+	if (w.vibrancy != "" || w.captionless()) && kind != sizeMinimized {
+		w.extendFrame(false)
 	}
 	was := w.state
 	switch kind {
@@ -1015,6 +1018,38 @@ func (w *window) frameCalcSize(wp, lp uintptr) uintptr {
 // with a hidden title bar keep the line of other apps' windows.
 func (w *window) frameBorder() int32 {
 	if !w.frameless || w.opts.Flyout != nil || windows11() || !w.hasStyle(wsThickFrame) {
+		return 0
+	}
+	return 1
+}
+
+func (w *window) paintTopBorder() bool {
+	if w.surface == nil || w.topLine() == 0 || w.vibrancy != "" || w.surface.viaComposition() {
+		return false
+	}
+	var ps paintStruct
+	dc, _, _ := procBeginPaint.Call(w.hwnd, uintptr(unsafe.Pointer(&ps)))
+	if dc == 0 {
+		return false
+	}
+	if ps.Paint.Top == 0 && ps.Paint.Bottom > 0 {
+		// Black lets DWM show its border through the extended frame.
+		stripe := ps.Paint
+		stripe.Bottom = 1
+		brush, _, _ := procGetStockObject.Call(blackBrush)
+		procFillRect.Call(dc, uintptr(unsafe.Pointer(&stripe)), brush)
+	}
+	procEndPaint.Call(w.hwnd, uintptr(unsafe.Pointer(&ps)))
+	return true
+}
+
+// topLine reserves the client pixel where Windows 10 composites the top border.
+func (w *window) topLine() int32 {
+	return topLine(w.hiddenTitleBar, w.hasStyle(wsThickFrame), windows11(), w.IsMaximized(), w.fullScreen, w.opts.Flyout != nil)
+}
+
+func topLine(hiddenTitleBar, thickFrame, win11, maximized, fullScreen, flyout bool) int32 {
+	if !hiddenTitleBar || !thickFrame || win11 || maximized || fullScreen || flyout {
 		return 0
 	}
 	return 1
@@ -1528,24 +1563,14 @@ func (w *window) updateLayered() {
 	}
 }
 
-// SetHasShadow casts DWM's shadow around a window without a caption, or
-// none, by extending its frame a pixel into the client area: a window
-// whose client area is all of it, with no borders, has no shadow
-// otherwise. A resizable frameless window on Windows 10 keeps borders,
-// invisible ones (frameBorder), which DWM casts the shadow around: it is
-// left unextended, as Windows 10 draws the frame extended as a white line
-// along the top of the client area.
+// SetHasShadow updates the DWM frame used to cast the window's shadow.
 func (w *window) SetHasShadow(v bool) {
 	w.shadow = v
 	w.applyTransparentFramePolicy()
 	if !w.captionless() || w.vibrancy != "" {
 		return
 	}
-	m := margins{}
-	if v && w.frameBorder() == 0 {
-		m.Top = 1 // a frame the size of a pixel brings the shadow back
-	}
-	procDwmExtendFrameIntoClientArea.Call(w.hwnd, uintptr(unsafe.Pointer(&m)))
+	w.extendFrame(false)
 }
 
 // Transparent web overlays keep native sizing borders for hit testing, but a
@@ -1642,11 +1667,8 @@ func (w *window) SetVibrancy(material string) {
 	w.vibrancy = material
 	w.applyTransparentFramePolicy()
 	backdrop := backdropFor(material)
-	w.extendGlass(true)
+	w.extendFrame(true)
 	procDwmSetWindowAttribute.Call(w.hwnd, dwmwaSystemBackdropType, uintptr(unsafe.Pointer(&backdrop)), 4)
-	if material == "" && w.captionless() && w.shadow {
-		w.SetHasShadow(true)
-	}
 	w.withWebView(w.applyWebViewBackground)
 	procInvalidateRect(w.hwnd)
 }
@@ -1654,15 +1676,20 @@ func (w *window) SetVibrancy(material string) {
 // SetVibrancyTint does nothing: Windows' backdrops take no tint.
 func (w *window) SetVibrancyTint(*platform.Color) {}
 
-// extendGlass extends the frame where the material shows, behind the
-// page: over the whole client area, or nowhere without a material. With
-// always it extends the frame even when its extension has not changed.
-func (w *window) extendGlass(always bool) {
+// extendFrame shares the DWM margins between materials, the top border and shadows.
+func (w *window) extendFrame(always bool) {
 	m := margins{}
-	if w.vibrancy != "" {
+	switch {
+	case w.vibrancy != "":
 		var r rect
 		procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&r)))
 		m = glassMargins(w.glassFromBottom(), r.Bottom-r.Top)
+	case w.topLine() > 0:
+		// Windows 10 draws the line over the whole strip a frame reaches
+		// above the page, and no line at all over a pixel of it.
+		m.Top = resizeBorder(dpiOf(w.hwnd))
+	case w.shadow && w.frameBorder() == 0:
+		m.Top = 1 // a frame the size of a pixel brings the shadow back
 	}
 	if m == w.glass && !always {
 		return
