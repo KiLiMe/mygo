@@ -87,6 +87,54 @@ func TestTopLine(t *testing.T) {
 	}
 }
 
+func TestTopBorderStripe(t *testing.T) {
+	paint := rect{Left: 0, Top: 0, Right: 800, Bottom: 600}
+	stripe := topBorderStripe(paint, 1)
+	if stripe.Top != 0 || stripe.Bottom != 1 || stripe.Right != 800 {
+		t.Errorf("topBorderStripe = %+v, want the first row of the paint area", stripe)
+	}
+	for _, test := range []struct {
+		name  string
+		paint rect
+		line  int32
+	}{
+		{name: "no line", paint: paint},
+		{name: "area starts below the line", paint: rect{Top: 1, Bottom: 600}, line: 1},
+		{name: "empty area", paint: rect{}, line: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := topBorderStripe(test.paint, test.line); got != (rect{}) {
+				t.Errorf("topBorderStripe = %+v, want an empty area", got)
+			}
+		})
+	}
+}
+
+func TestUncoveredArea(t *testing.T) {
+	client := rect{Right: 800, Bottom: 600}
+	surface := rect{Right: 800, Bottom: 600}
+	for _, test := range []struct {
+		name    string
+		surface rect
+		line    int32
+		want    rect
+		grown   bool
+	}{
+		{name: "fits", surface: surface},
+		{name: "fits under the line", surface: rect{Right: 800, Bottom: 599}, line: 1},
+		{name: "wider", surface: rect{Right: 700, Bottom: 600}, want: client, grown: true},
+		{name: "taller", surface: rect{Right: 800, Bottom: 500}, want: client, grown: true},
+		{name: "wider under the line", surface: rect{Right: 700, Bottom: 599}, line: 1, want: rect{Top: 1, Right: 800, Bottom: 600}, grown: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			area, grown := uncoveredArea(client, test.surface, test.line)
+			if grown != test.grown || area != test.want {
+				t.Errorf("uncoveredArea = %+v, %v, want %+v, %v", area, grown, test.want, test.grown)
+			}
+		})
+	}
+}
+
 func TestTransparentWebWindowSuppressesNativeFramePainting(t *testing.T) {
 	for _, test := range []struct {
 		name        string

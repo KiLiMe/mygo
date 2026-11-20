@@ -931,8 +931,14 @@ func (w *window) frameBorder() int32 {
 	return 1
 }
 
+// paintsTopBorder reports whether this window paints the line of Windows 10's
+// top border itself, rather than letting the content show over it.
+func (w *window) paintsTopBorder() bool {
+	return w.surface != nil && w.topLine() != 0 && w.vibrancy == "" && !w.surface.viaComposition()
+}
+
 func (w *window) paintTopBorder() bool {
-	if w.surface == nil || w.topLine() == 0 || w.vibrancy != "" || w.surface.viaComposition() {
+	if !w.paintsTopBorder() {
 		return false
 	}
 	var ps paintStruct
@@ -940,15 +946,26 @@ func (w *window) paintTopBorder() bool {
 	if dc == 0 {
 		return false
 	}
-	if ps.Paint.Top == 0 && ps.Paint.Bottom > 0 {
+	if stripe := topBorderStripe(ps.Paint, w.topLine()); stripe.Bottom > 0 {
 		// Black lets DWM show its border through the extended frame.
-		stripe := ps.Paint
-		stripe.Bottom = 1
 		brush, _, _ := procGetStockObject.Call(blackBrush)
 		procFillRect.Call(dc, uintptr(unsafe.Pointer(&stripe)), brush)
 	}
 	procEndPaint.Call(w.hwnd, uintptr(unsafe.Pointer(&ps)))
 	return true
+}
+
+// topBorderStripe returns the part of a paint area that shows the top border
+// through the extended frame, empty when the area starts below that line: DWM
+// composites the border in those pixels over whatever was there, so painting
+// them clears a frame that the window restored with the content that was there
+// before, as it does after a minimize discarded the surface.
+func topBorderStripe(paint rect, line int32) rect {
+	if line == 0 || paint.Top != 0 || paint.Bottom <= 0 {
+		return rect{}
+	}
+	paint.Bottom = 1
+	return paint
 }
 
 // topLine reserves the client pixel where Windows 10 composites the top border.
