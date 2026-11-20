@@ -189,6 +189,7 @@ var (
 	procRemoveMenu                    = user32.NewProc("RemoveMenu")
 
 	// gdi32
+	procGetStockObject     = gdi32.NewProc("GetStockObject")
 	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
 	procDeleteObject       = gdi32.NewProc("DeleteObject")
 	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
@@ -249,6 +250,8 @@ var (
 	procGetFileVersionInfoW     = versionD.NewProc("GetFileVersionInfoW")
 	procVerQueryValueW          = versionD.NewProc("VerQueryValueW")
 )
+
+const blackBrush = 4 // BLACK_BRUSH
 
 // Window messages and constants.
 const (
