@@ -233,7 +233,10 @@ func newSurface(w *window) *surface {
 func (s *surface) fit() {
 	var r rect
 	procGetClientRect.Call(s.w.hwnd, uintptr(unsafe.Pointer(&r)))
-	procSetWindowPos.Call(s.hwnd, 0, 0, 0, uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
+	// Above the surface, the line of the window's top border is the frame's
+	// (window.topLine): it shows where the surface leaves it uncovered.
+	top := s.w.topLine()
+	procSetWindowPos.Call(s.hwnd, 0, 0, uintptr(top), uintptr(r.Right-r.Left), uintptr(max(0, r.Bottom-r.Top-top)), swpNoZOrder|swpNoActivate)
 }
 
 func (s *surface) dpi() int { return dpiOf(s.w.hwnd) }
@@ -509,15 +512,16 @@ func (s *surface) fillUncovered() {
 	}
 	var c, sr rect
 	procGetClientRect.Call(s.w.hwnd, uintptr(unsafe.Pointer(&c)))
-	procGetClientRect.Call(s.hwnd, uintptr(unsafe.Pointer(&sr))) // the surface is at the client area's origin
-	if sr.Right >= c.Right && sr.Bottom >= c.Bottom {
+	procGetClientRect.Call(s.hwnd, uintptr(unsafe.Pointer(&sr)))
+	c.Top += s.w.topLine()
+	if sr.Right >= c.Right && sr.Bottom >= c.Bottom-c.Top {
 		return // the window did not grow
 	}
 	dc, _, _ := procGetDC.Call(s.w.hwnd)
 	if dc == 0 {
 		return
 	}
-	procExcludeClipRect.Call(dc, 0, 0, uintptr(sr.Right), uintptr(sr.Bottom))
+	procExcludeClipRect.Call(dc, 0, uintptr(c.Top), uintptr(sr.Right), uintptr(c.Top+sr.Bottom))
 	procFillRect.Call(dc, uintptr(unsafe.Pointer(&c)), s.bgBrush)
 	procReleaseDC.Call(s.w.hwnd, dc)
 	procGdiFlush.Call()
@@ -551,6 +555,7 @@ func (s *surface) fillUnder() {
 	if dc == 0 {
 		return
 	}
+	c.Top += s.w.topLine() // the line of the top border is the frame's
 	procFillRect.Call(dc, uintptr(unsafe.Pointer(&c)), s.bgBrush)
 	procReleaseDC.Call(s.w.hwnd, dc)
 	procGdiFlush.Call()

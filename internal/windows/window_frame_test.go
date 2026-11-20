@@ -59,6 +59,34 @@ func TestWindowRedirectionBitmap(t *testing.T) {
 	}
 }
 
+func TestTopLine(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		hiddenTitle bool
+		thickFrame  bool
+		win11       bool
+		maximized   bool
+		fullScreen  bool
+		flyout      bool
+		want        int32
+	}{
+		{name: "Windows 10", hiddenTitle: true, thickFrame: true, want: 1},
+		{name: "Windows 10, maximized", hiddenTitle: true, thickFrame: true, maximized: true},
+		{name: "Windows 10, full screen", hiddenTitle: true, thickFrame: true, fullScreen: true},
+		{name: "Windows 10, flyout", hiddenTitle: true, thickFrame: true, flyout: true},
+		{name: "Windows 10, no sizing frame", hiddenTitle: true},
+		{name: "Windows 10, with a caption", thickFrame: true},
+		{name: "Windows 11", hiddenTitle: true, thickFrame: true, win11: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := topLine(test.hiddenTitle, test.thickFrame, test.win11, test.maximized, test.fullScreen, test.flyout)
+			if got != test.want {
+				t.Errorf("topLine = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
 func TestTransparentWebWindowSuppressesNativeFramePainting(t *testing.T) {
 	for _, test := range []struct {
 		name        string
