@@ -516,18 +516,29 @@ func (s *surface) fillUncovered() {
 	var c, sr rect
 	procGetClientRect.Call(s.w.hwnd, uintptr(unsafe.Pointer(&c)))
 	procGetClientRect.Call(s.hwnd, uintptr(unsafe.Pointer(&sr)))
-	c.Top += s.w.topLine()
-	if sr.Right >= c.Right && sr.Bottom >= c.Bottom-c.Top {
+	area, grown := uncoveredArea(c, sr, s.w.topLine())
+	if !grown {
 		return // the window did not grow
 	}
 	dc, _, _ := procGetDC.Call(s.w.hwnd)
 	if dc == 0 {
 		return
 	}
-	procExcludeClipRect.Call(dc, 0, uintptr(c.Top), uintptr(sr.Right), uintptr(c.Top+sr.Bottom))
-	procFillRect.Call(dc, uintptr(unsafe.Pointer(&c)), s.bgBrush)
+	procExcludeClipRect.Call(dc, 0, uintptr(area.Top), uintptr(sr.Right), uintptr(area.Top+sr.Bottom))
+	procFillRect.Call(dc, uintptr(unsafe.Pointer(&area)), s.bgBrush)
 	procReleaseDC.Call(s.w.hwnd, dc)
 	procGdiFlush.Call()
+}
+
+// uncoveredArea returns the client area the surface leaves uncovered, with the
+// line of the top border left to the frame, and whether the window grew past
+// the surface at all: when it did not, the surface covers the client area.
+func uncoveredArea(client, surface rect, line int32) (rect, bool) {
+	client.Top += line
+	if surface.Right >= client.Right && surface.Bottom >= client.Bottom-client.Top {
+		return rect{}, false
+	}
+	return client, true
 }
 
 // fillUnder paints the window's whole client area with the content's
