@@ -53,15 +53,16 @@ func View(c *ui.Context, t *Terminal) ui.Element {
 	return e
 }
 
-// pointerShape is the pointer over the grid, as Ghostty shows it: the
-// shape the program asked for (OSC 22), the I-beam until it asks; the
-// arrow once it takes the mouse, and the I-beam again once it leaves it,
+// pointerShape is the pointer over the grid: the shape the program asked
+// for (OSC 22), and until it asks, Options.PointerText's -- the arrow, as
+// Windows Terminal shows it, or the I-beam, as Ghostty does. The arrow once
+// the program takes the mouse, and that default again once it leaves it,
 // until it asks for another; and the I-beam while Shift is held over a
 // program that takes the mouse, as Shift selects then.
 func (v *view) pointerShape(term *vt.Terminal, mods ui.Modifiers) ui.Cursor {
 	asked := term.MouseShape()
 	if tracking := term.MouseTracking(); tracking != v.tracking {
-		v.tracking, v.modeOSC, v.modeShape = tracking, asked, shapeText
+		v.tracking, v.modeOSC, v.modeShape = tracking, asked, v.t.defaultShape()
 		if tracking {
 			v.modeShape = shapeDefault
 		}
@@ -74,6 +75,14 @@ func (v *view) pointerShape(term *vt.Terminal, mods ui.Modifiers) ui.Cursor {
 		shape = v.modeShape
 	}
 	return cursorOf(shape)
+}
+
+// defaultShape is the pointer over the grid while no program asks for one.
+func (t *Terminal) defaultShape() int {
+	if t.opts.PointerText {
+		return shapeText
+	}
+	return shapeDefault
 }
 
 // Ghostty's pointer shapes (GhosttyMouseShape), as OSC 22 names them.
@@ -131,7 +140,11 @@ func cursorOf(shape int) ui.Cursor {
 // showing it.
 func (t *Terminal) viewOf(c *ui.Context) *view {
 	if t.v == nil {
-		t.v = &view{t: t, blinkStart: time.Now()}
+		// A terminal nobody has written to has the text shape (see vt's
+		// MouseShape), so the shape modeOSC starts at is that one: the
+		// first frame then shows the default this terminal was given,
+		// rather than a shape the program never asked for.
+		t.v = &view{t: t, blinkStart: time.Now(), modeShape: t.defaultShape(), modeOSC: shapeText}
 		t.v.shaped.init(4096)
 	}
 	v := t.v
@@ -235,8 +248,9 @@ type view struct {
 	arm linkArm
 	// pointerAt is the pointer over the grid (pointerShape); tracking whether
 	// the program took the mouse as of the last frame, and modeShape the
-	// shape that taking or leaving it showed, while the program's shape
-	// (OSC 22) is still modeOSC, the one it had then.
+	// shape that taking or leaving it showed -- the arrow, or the default
+	// the terminal was given -- while the program's shape (OSC 22) is still
+	// modeOSC, the one it had then.
 	pointerAt ui.Cursor
 	tracking  bool
 	modeShape int

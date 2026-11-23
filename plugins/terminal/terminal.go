@@ -166,6 +166,12 @@ type Options struct {
 	// RightClickCopyPastePriority keeps secondary clicks for terminal copy
 	// and paste actions while the program has mouse reporting enabled.
 	RightClickCopyPastePriority bool
+	// PointerText gives the grid the I-beam while no program asks for a
+	// pointer shape (OSC 22), as Ghostty shows it; unset, it is the arrow,
+	// as Windows Terminal shows it. A program's own shape wins either way,
+	// and Shift over one that takes the mouse selects, as that is the
+	// I-beam.
+	PointerText bool
 	// NoClipboardWrite keeps programs from writing to the clipboard (OSC
 	// 52, OSC 5522), as Ghostty's clipboard-write = deny. Writes go
 	// through unless it is set; reads are governed by ClipboardRead.
