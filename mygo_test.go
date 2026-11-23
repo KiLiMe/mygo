@@ -326,6 +326,15 @@ func TestWindowOptions(t *testing.T) {
 	}
 }
 
+func TestConsumeActivationClickOption(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		_, fw := testWindow(t, WindowOptions{ConsumeActivationClick: enabled})
+		if fw.Opts.ConsumeActivationClick != enabled {
+			t.Errorf("ConsumeActivationClick = %v, want %v", fw.Opts.ConsumeActivationClick, enabled)
+		}
+	}
+}
+
 func TestSafariTabFocusOption(t *testing.T) {
 	_, fw := testWindow(t, WindowOptions{Page: PageOptions{SafariTabFocus: true}})
 	if fw.Opts.TabFocusesLinks {
@@ -1058,6 +1067,39 @@ func TestChannelsClosedAtOnce(t *testing.T) {
 		if m["t"] == "chan" && m["end"] == true {
 			t.Fatalf("the page was told about the end of channel %v, which it closed", m["c"])
 		}
+	}
+}
+
+// A call the page may cancel with a signal streams through its channels,
+// and canceling it cancels the method's context.
+func TestChannelsOfACancelableCall(t *testing.T) {
+	s := &streamer{sent: make(chan error, 16), stopped: make(chan error, 1)}
+	bindForTest(t, "Stream", s)
+	_, fw := testWindow(t, WindowOptions{})
+
+	page(fw, `{"t":"call","id":1,"k":"tok","m":"Stream.Count","a":[2,7],"cancel":true}`)
+	reply := received(t, fw, func(m map[string]any) bool { return m["t"] == "reply" && m["id"] == float64(1) })
+	if reply["ok"] != true {
+		t.Fatalf("a cancelable call could not send on its channel: %v", reply)
+	}
+	var got []any
+	for _, m := range pageMessages(t, fw) {
+		if m["t"] == "chan" && m["c"] == float64(7) && m["end"] != true {
+			got = append(got, m["p"])
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("page received %v, want [0 1]", got)
+	}
+
+	page(fw, `{"t":"call","id":2,"k":"tok","m":"Stream.Wait","a":[8],"cancel":true}`)
+	received(t, fw, func(m map[string]any) bool { return m["c"] == float64(8) && m["p"] == "ready" })
+	page(fw, `{"t":"cancel","id":2,"k":"tok"}`)
+	if err := wait.For(t, "the call to be canceled", s.stopped); !errors.Is(err, context.Canceled) {
+		t.Errorf("call context: %v", err)
+	}
+	if err := wait.For(t, "the late send", s.sent); !errors.Is(err, ErrChannelClosed) {
+		t.Errorf("Send after the call was canceled = %v", err)
 	}
 }
 

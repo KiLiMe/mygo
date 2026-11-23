@@ -2673,7 +2673,8 @@ func SwitchBase(c *Context, on *bool) Element {
 // reports the new layout once the user lets go, or once a double click
 // fits a column to its cells, for the app to save. Columns wider
 // than the table scroll sideways, the header with them. With s.Sort, a
-// click on the header of a Sortable column sorts the rows by it; with
+// click on the header of a Sortable column sorts the rows by it, as Enter
+// and Space do on the header Tab reached; with
 // s.SortBy, a Cmd-click or a Shift-click sorts by it after the others;
 // with s.HeaderMenu, the header has a context menu.
 //
@@ -7245,7 +7246,8 @@ func (_handle Element) PressCanceled() bool {
 }
 
 // Pressed reports whether the element is being pressed with the pointer's
-// primary button, unless it is disabled. A press of another button, as a
+// primary button, or, focused, held down with Space, which clicks it as
+// it goes up, unless it is disabled. A press of another button, as a
 // right-click's, is no press here, as CSS's :active and drags on the web
 // have it: PressedButton tells which button presses the element.
 func (_handle Element) Pressed() bool {
