@@ -1937,6 +1937,81 @@ func TestSetLinksOff(t *testing.T) {
 	}
 }
 
+// TestSetLinkKinds: each kind of link is turned off on its own -- the
+// hyperlink a program set, the URL the terminal's pattern finds, and the path
+// it guesses at -- while the rest stay links. A dead kind is skipped rather
+// than fatal to the cell: the text under it is read for the kinds still on.
+func TestSetLinkKinds(t *testing.T) {
+	loadLib(t)
+	term, err := New(Options{Conn: newPipe(), OpenLink: func(string) bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.Feed([]byte("src/app.go:12\r\nhttps://x.org\r\n\x1b]8;;https://y.org\x1b\\link\x1b]8;;\x1b\\\r\nmailto:a@b.c\r\n"))
+	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+	tt.Frame()
+	const (
+		pathRow = 0
+		urlRow  = 1
+		oscRow  = 2
+		mailRow = 3
+	)
+	link := func(row int) string {
+		l, _, _ := term.v.linkAt(0, row)
+		return l
+	}
+	// New finds every kind: a path, a URL, the hyperlink the program set, and
+	// a URL that is no path.
+	for row, want := range []string{"src/app.go:12", "https://x.org", "https://y.org", "mailto:a@b.c"} {
+		if got := link(row); got != want {
+			t.Errorf("row %d is %q with every kind on, want %q", row, got, want)
+		}
+	}
+
+	// The guessed paths off: the same cells are text, while the URL and the
+	// hyperlink stay links.
+	term.SetLinkKinds(LinkKinds{Program: true, URL: true})
+	if got := link(pathRow); got != "" {
+		t.Errorf("a path is %q with paths off, want none", got)
+	}
+	if got, want := link(urlRow), "https://x.org"; got != want {
+		t.Errorf("the URL is %q with paths off, want %q", got, want)
+	}
+	if got, want := link(oscRow), "https://y.org"; got != want {
+		t.Errorf("the hyperlink is %q with paths off, want %q", got, want)
+	}
+
+	// The printed URLs off: mailto: is no path either, so that cell is text,
+	// while what is a path or the program's own link stays one.
+	term.SetLinkKinds(LinkKinds{Program: true, Path: true})
+	if got := link(mailRow); got != "" {
+		t.Errorf("mailto: is %q with URLs off, want none", got)
+	}
+	if got, want := link(pathRow), "src/app.go:12"; got != want {
+		t.Errorf("the path is %q with URLs off, want %q", got, want)
+	}
+	if got, want := link(oscRow), "https://y.org"; got != want {
+		t.Errorf("the hyperlink is %q with URLs off, want %q", got, want)
+	}
+
+	// The program's hyperlinks off: that text is no URL and no path, so the
+	// cell is text, and the words beside it are still read as they were.
+	term.SetLinkKinds(LinkKinds{URL: true, Path: true})
+	if got := link(oscRow); got != "" {
+		t.Errorf("the hyperlink is %q with hyperlinks off, want none", got)
+	}
+	if got, want := link(urlRow), "https://x.org"; got != want {
+		t.Errorf("the URL is %q with hyperlinks off, want %q", got, want)
+	}
+
+	// Nothing dead again: the kinds come back one call later.
+	term.SetLinkKinds(LinkKinds{Program: true, URL: true, Path: true})
+	if got, want := link(pathRow), "src/app.go:12"; got != want {
+		t.Errorf("the path is %q with every kind on again, want %q", got, want)
+	}
+}
+
 // TestClickOpensLinksWithoutCommand: a plain click on a link opens it, a URL
 // and a path alike, while a press on one dragged off its cell is a selection,
 // which is how a URL in the scrollback is taken.

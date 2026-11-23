@@ -546,6 +546,12 @@ type Terminal struct {
 	// finds its links.
 	noLinks bool
 
+	// deadLinks are the kinds of link that are not one: the pointer underlines
+	// none of them and a click opens none, while the rest of what a link is
+	// stays. Inverted, as noLinks is, so that a Terminal made without New finds
+	// every kind.
+	deadLinks LinkKinds
+
 	// hoverHint is whether the pointer underlines a link without the modifier
 	// held -- Windows Terminal shows its hint on hover alone. A Terminal made
 	// without New keeps the modifier.
@@ -1048,6 +1054,33 @@ func (t *Terminal) SetCopyOnSelect(c CopyOnSelect) {
 func (t *Terminal) SetLinks(on bool) {
 	t.mu.Lock()
 	t.noLinks = !on
+	t.mu.Unlock()
+	t.redraw()
+}
+
+// LinkKinds is where a link at a cell may come from: a program that set one,
+// and the terminal's own reading of text a program printed.
+type LinkKinds struct {
+	// Program is a hyperlink the program set (OSC 8): it says the text is a
+	// link, and nothing is guessed.
+	Program bool
+	// URL is a URL printed as text, which the terminal's pattern finds. A
+	// program rarely prints one it did not mean.
+	URL bool
+	// Path is a file path printed as text, which the terminal guesses at: a
+	// word with an extension or a slash, and a place in the file after it.
+	// Left on, a pointer resting on the output of anything that names files
+	// turns into a hand.
+	Path bool
+}
+
+// SetLinkKinds is which kinds of link are a link, under SetLinks: off, that
+// kind is text like the rest. The kinds are not exclusive -- a cell the
+// program set as a hyperlink is one of them, and the text under it is not read
+// for a URL or a path. The next frame shows it.
+func (t *Terminal) SetLinkKinds(k LinkKinds) {
+	t.mu.Lock()
+	t.deadLinks = LinkKinds{Program: !k.Program, URL: !k.URL, Path: !k.Path}
 	t.mu.Unlock()
 	t.redraw()
 }

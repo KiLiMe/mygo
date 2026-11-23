@@ -1485,7 +1485,7 @@ func (v *view) linkAt(col, row int) (link string, path bool, at linkSpan) {
 	if v.cols == 0 {
 		return "", false, linkSpan{}
 	}
-	if url := v.hyperlinkAt(col, row); url != "" {
+	if url := v.hyperlinkAt(col, row); url != "" && !t.deadLinks.Program {
 		// The hyperlink's cells are those around the cell with its URL,
 		// counted across the rows it wraps over.
 		// A row's edge is crossed only where it wraps.
@@ -1518,10 +1518,14 @@ func (v *view) linkAt(col, row int) (link string, path bool, at linkSpan) {
 		}
 	}
 	i := row*v.cols + col
-	if url, a, b := urlAt(text, cols, i); url != "" {
-		return url, false, v.spanOf(a, b)
+	// A dead kind is not asked about, the next one is: a URL turned off leaves
+	// the path under it to be found on its own.
+	if !t.deadLinks.URL {
+		if url, a, b := urlAt(text, cols, i); url != "" {
+			return url, false, v.spanOf(a, b)
+		}
 	}
-	if t.opts.OpenLink != nil {
+	if t.opts.OpenLink != nil && !t.deadLinks.Path {
 		if p, a, b := pathAt(text, cols, i); p != "" {
 			return p, true, v.spanOf(a, b)
 		}
