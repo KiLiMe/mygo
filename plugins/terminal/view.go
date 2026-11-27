@@ -215,6 +215,11 @@ type view struct {
 	pending      *pendingKey
 	preedit      string
 	preeditCaret int
+	// busy tells that the view reads the clipboard, whose GTK waits run
+	// a nested main loop: the input that comes meanwhile lands in
+	// deferred, and goes in after the paste the read is for.
+	busy     bool
+	deferred []ui.InputEvent
 
 	focused    bool
 	blinkStart time.Time
@@ -630,8 +635,26 @@ func (v *view) menuItem(m *ui.Menu, label string, a Action) *ui.MenuItem {
 	return it
 }
 
-// input handles the input of the view as it comes.
+// input handles the input of the view as it comes -- after the input
+// that came while the clipboard was read, in the order it came.
 func (v *view) input(ev ui.InputEvent) bool {
+	if v.busy {
+		v.deferred = append(v.deferred, ev)
+		return true
+	}
+	took := v.dispatch(ev)
+	for len(v.deferred) > 0 {
+		next := v.deferred[0]
+		v.deferred = v.deferred[1:]
+		if v.dispatch(next) {
+			took = true
+		}
+	}
+	return took
+}
+
+// dispatch handles one input event at once.
+func (v *view) dispatch(ev ui.InputEvent) bool {
 	switch ev.Kind {
 	case ui.InputKeyDown:
 		return v.keyDown(ev)
@@ -1107,17 +1130,32 @@ func (v *view) copied(text string, by CopySource) {
 // read: it reads what was read here.
 func (v *view) paste() bool {
 	t := v.t
-	held := v.services.ClipboardFormats()
+	held, d := v.readPaste(t)
 	if len(held) == 0 {
 		return false
 	}
-	var d transfer.Data
+	if t.opts.OnPaste != nil && t.opts.OnPaste(d) {
+		return true
+	}
+	t.pasteData(d, held)
+	return true
+}
+
+// readPaste reads the clipboard for paste. The waits run a nested main
+// loop on Linux, which delivers the input that comes meanwhile to this
+// view before they return: that input waits in v.deferred, or the paste's
+// own key would overwrite the pending key of a key pressed after it, and
+// the text and release of that key would go lost.
+func (v *view) readPaste(t *Terminal) (held []transfer.Format, d transfer.Data) {
+	v.busy = true
+	defer func() { v.busy = false }()
+	held = v.services.ClipboardFormats()
+	if len(held) == 0 {
+		return held, d
+	}
 	switch {
 	case t.opts.OnPaste != nil:
 		d = v.services.ReadClipboardData()
-		if t.opts.OnPaste(d) {
-			return true
-		}
 	case t.readsClipboard():
 		var formats []transfer.Format
 		for _, f := range held {
@@ -1129,8 +1167,7 @@ func (v *view) paste() bool {
 	default:
 		d = v.services.ReadClipboardData(transfer.Text)
 	}
-	t.pasteData(d, held)
-	return true
+	return held, d
 }
 
 // clearSelection lets go of the selection.
