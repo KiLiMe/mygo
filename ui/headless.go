@@ -84,7 +84,8 @@ type headless struct {
 	// inactive that it is not drawn as active (SetWindowActive).
 	material, inactive bool
 	// reading runs once as the clipboard is next read, as GTK's nested
-	// event loop may draw a frame then.
+	// event loop delivers the input that comes meanwhile, and may draw a
+	// frame, before the read returns.
 	reading func()
 	// last is the scene of the last frame, which tests inspect.
 	last        *scene.Scene
@@ -140,17 +141,25 @@ func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
 func (h *headless) startDrag()                                 {}
 func (h *headless) setDropFormats([]transfer.Format)           {}
-func (h *headless) readClipboard() string {
+
+// nestedRead runs what a test put in reading, as the nested event loop of
+// GTK's clipboard waits does before the wait returns.
+func (h *headless) nestedRead() {
 	if r := h.reading; r != nil {
 		h.reading = nil
 		r()
 	}
+}
+
+func (h *headless) readClipboard() string {
+	h.nestedRead()
 	return h.clipboard
 }
 
 // readClipboardData reads the representations of formats of what was
 // copied, or the text of WriteClipboard.
 func (h *headless) readClipboardData(formats []transfer.Format) transfer.Data {
+	h.nestedRead()
 	d := h.clipboardData
 	if len(d.Items()) == 0 && h.clipboard != "" {
 		d = transfer.TextData(h.clipboard)
@@ -1191,6 +1200,11 @@ func (t *Tester) SetClipboardData(d transfer.Data) {
 	b, _ := d.Read(transfer.Text)
 	t.h.clipboard = string(b)
 }
+
+// ReadClipboardDuring makes the next clipboard read run fn before it
+// answers, as GTK's waits do: they read in a nested event loop, which
+// delivers the input that comes meanwhile before they return.
+func (t *Tester) ReadClipboardDuring(fn func()) { t.h.reading = fn }
 
 // Cursor returns the pointer shape the view shows.
 func (t *Tester) Cursor() Cursor { return t.h.cursor }
