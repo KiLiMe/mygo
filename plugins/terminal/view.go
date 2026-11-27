@@ -291,9 +291,14 @@ type pendingKey struct {
 	unshifted rune
 	mods      ui.Modifiers
 	repeat    bool
-	// taken: Options.OnKey took the key, whose text and release are
-	// dropped.
+	// taken: Options.OnKey or a keybind took the key, whose text and
+	// release are dropped.
 	taken bool
+	// types: the key types text, so the text the binding took too; a key
+	// that types none, Insert or F5, has none to drop, and the text that
+	// comes next is the next key's when the release never answers — an
+	// input method takes it on Linux.
+	types bool
 	// sent: the key went as Alt (Option as Alt on macOS), and the text
 	// macOS still types or composes for it is dropped; its release goes
 	// as any key's.
@@ -702,7 +707,7 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 	t := v.t
 	if on := t.opts.OnKey; on != nil && on(ev.Mods, ev.Key) {
 		k, _ := vtKey(ev.Key)
-		v.pending = &pendingKey{key: k, taken: true}
+		v.pending = &pendingKey{key: k, taken: true, types: typesText(ev.Key)}
 		return true
 	}
 	mac := goos == "darwin"
@@ -711,7 +716,7 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 		if v.perform(b.Action, b.Performable) || !b.Performable {
 			// Its text and release are the binding's too.
 			k, _ := vtKey(key)
-			v.pending = &pendingKey{key: k, taken: true}
+			v.pending = &pendingKey{key: k, taken: true, types: typesText(key)}
 			return true
 		}
 	}
@@ -880,8 +885,17 @@ func (v *view) typed(text string) {
 	v.preedit = ""
 	p := v.pending
 	v.pending = nil
-	if p != nil && (p.taken || p.sent) {
-		return // the text of a key OnKey took, or sent as Alt
+	if p != nil {
+		switch {
+		case p.sent:
+			return // the text of a key sent as Alt
+		case p.taken && p.types:
+			return // the text of a key OnKey or a keybind took
+		case p.taken:
+			// The key types no text, so the binding took none: this is
+			// the next key's, whose press came as text alone.
+			p = nil
+		}
 	}
 	if p == nil {
 		// Text without a key: of an input method, or every key typing
