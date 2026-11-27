@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -21,10 +20,12 @@ func TestBindingKeyWithoutRelease(t *testing.T) {
 	tt.SetClipboard("hello")
 
 	tt.KeyRepeat(ui.Shift, ui.KeyInsert) // pressed, never released
-	if got := p.take(term); !strings.Contains(got, "\x1b[200~hello\x1b[201~") {
-		t.Fatalf("paste = %q", got)
+	if got, want := p.take(term), "\x1b[200~hello\x1b[201~"; got != want {
+		t.Fatalf("paste = %q, want %q", got, want)
 	}
 
+	// One text event a letter, as an input method sends them there: the
+	// pending key goes with the first.
 	for _, r := range "ss" {
 		tt.Type(string(r))
 	}

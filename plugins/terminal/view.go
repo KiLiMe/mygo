@@ -215,15 +215,9 @@ type view struct {
 	pending      *pendingKey
 	preedit      string
 	preeditCaret int
-	// busy tells that the view reads the clipboard, whose GTK waits run
-	// a nested main loop: the input that comes meanwhile lands in
-	// deferred, and goes in after the paste the read is for.
-	busy     bool
-	deferred []ui.InputEvent
-
-	focused    bool
-	blinkStart time.Time
-	caretCell  [2]int // the cursor's cell, for input methods
+	focused      bool
+	blinkStart   time.Time
+	caretCell    [2]int // the cursor's cell, for input methods
 	// selecting tells that the primary button selects; reporting that a
 	// press went to the program, which gets the release too.
 	selecting, reporting bool
@@ -276,6 +270,12 @@ type view struct {
 	scrollZoom bool    // a touchpad scroll gesture zooms, from how it began
 	ticking    bool    // an autoscroll tick is due
 
+	// busy tells that the view waits on the clipboard, whose reads run a
+	// nested main loop: the input that comes meanwhile waits in deferred,
+	// and goes in after the paste the read is for.
+	busy     bool
+	deferred []ui.InputEvent
+
 	// reads are the program's reads of the clipboard waiting to be
 	// answered; clipPrompt is the one the terminal's own prompt asks
 	// about while clipOpen, one at a time.
@@ -296,14 +296,12 @@ type pendingKey struct {
 	unshifted rune
 	mods      ui.Modifiers
 	repeat    bool
-	// taken: Options.OnKey or a keybind took the key, whose text and
-	// release are dropped.
-	taken bool
-	// types: the key types text, so the text the binding took too; a key
-	// that types none, Insert or F5, has none to drop, and the text that
-	// comes next is the next key's when the release never answers — an
-	// input method takes it on Linux.
-	types bool
+	// taken: Options.OnKey or a keybind took the key, whose release is
+	// dropped. types says whether it took the text too, which only a key
+	// that types text has: the text after a key that types none, Insert or
+	// F5, is the next key's: its press comes as text alone on Linux,
+	// where an input method takes it.
+	taken, types bool
 	// sent: the key went as Alt (Option as Alt on macOS), and the text
 	// macOS still types or composes for it is dropped; its release goes
 	// as any key's.
@@ -643,17 +641,20 @@ func (v *view) input(ev ui.InputEvent) bool {
 		return true
 	}
 	took := v.dispatch(ev)
-	for len(v.deferred) > 0 {
-		next := v.deferred[0]
-		v.deferred = v.deferred[1:]
-		if v.dispatch(next) {
+	// Going in, a paste may defer input of its own, which the loop takes
+	// too: it reads the length each turn.
+	for i := 0; i < len(v.deferred); i++ {
+		if v.dispatch(v.deferred[i]) {
 			took = true
 		}
 	}
+	clear(v.deferred)
+	v.deferred = v.deferred[:0]
 	return took
 }
 
-// dispatch handles one input event at once.
+// dispatch handles one input event on its own, never waiting on the
+// clipboard.
 func (v *view) dispatch(ev ui.InputEvent) bool {
 	switch ev.Kind {
 	case ui.InputKeyDown:
@@ -723,23 +724,27 @@ func (v *view) dispatch(ev ui.InputEvent) bool {
 // goos is the system whose keys keyDown reads; tests read macOS's.
 var goos = runtime.GOOS
 
+// takeKey records that Options.OnKey or a keybind took the key: its
+// release, and the text it types, are the taker's.
+func (v *view) takeKey(key ui.Key) {
+	k, _ := vtKey(key)
+	v.pending = &pendingKey{key: k, taken: true, types: typesText(key)}
+}
+
 func (v *view) keyDown(ev ui.InputEvent) bool {
 	if ev.Key == ui.KeyUnknown {
 		return false // a modifier on its own, or a key of no name
 	}
 	t := v.t
 	if on := t.opts.OnKey; on != nil && on(ev.Mods, ev.Key) {
-		k, _ := vtKey(ev.Key)
-		v.pending = &pendingKey{key: k, taken: true, types: typesText(ev.Key)}
+		v.takeKey(ev.Key)
 		return true
 	}
 	mac := goos == "darwin"
 	mods, key := ev.Mods, ev.Key
 	if b, ok := t.binding(mods, key); ok {
 		if v.perform(b.Action, b.Performable) || !b.Performable {
-			// Its text and release are the binding's too.
-			k, _ := vtKey(key)
-			v.pending = &pendingKey{key: k, taken: true, types: typesText(key)}
+			v.takeKey(key)
 			return true
 		}
 	}
@@ -908,17 +913,13 @@ func (v *view) typed(text string) {
 	v.preedit = ""
 	p := v.pending
 	v.pending = nil
-	if p != nil {
-		switch {
-		case p.sent:
-			return // the text of a key sent as Alt
-		case p.taken && p.types:
-			return // the text of a key OnKey or a keybind took
-		case p.taken:
-			// The key types no text, so the binding took none: this is
-			// the next key's, whose press came as text alone.
-			p = nil
-		}
+	if p != nil && (p.sent || p.taken && p.types) {
+		return // the text of a key sent as Alt, or one a binding took
+	}
+	if p != nil && p.taken {
+		// The key types no text, so the binding took none: this is the
+		// next key's, whose press came as text alone.
+		p = nil
 	}
 	if p == nil {
 		// Text without a key: of an input method, or every key typing
@@ -1130,7 +1131,7 @@ func (v *view) copied(text string, by CopySource) {
 // read: it reads what was read here.
 func (v *view) paste() bool {
 	t := v.t
-	held, d := v.readPaste(t)
+	held, d := v.readClipboard(t)
 	if len(held) == 0 {
 		return false
 	}
@@ -1141,33 +1142,34 @@ func (v *view) paste() bool {
 	return true
 }
 
-// readPaste reads the clipboard for paste. The waits run a nested main
-// loop on Linux, which delivers the input that comes meanwhile to this
-// view before they return: that input waits in v.deferred, or the paste's
-// own key would overwrite the pending key of a key pressed after it, and
-// the text and release of that key would go lost.
-func (v *view) readPaste(t *Terminal) (held []transfer.Format, d transfer.Data) {
+// readClipboard reads the clipboard for paste, busy while it waits: the
+// waits run a nested main loop on Linux, which delivers the input that comes
+// meanwhile to input, which defers it until the paste the read is for has
+// gone in -- else the release of the key that pastes would come with no
+// pending key to clear, and the text of a key pressed meanwhile would go for
+// the binding's.
+func (v *view) readClipboard(t *Terminal) ([]transfer.Format, transfer.Data) {
 	v.busy = true
 	defer func() { v.busy = false }()
-	held = v.services.ClipboardFormats()
+	held := v.services.ClipboardFormats()
 	if len(held) == 0 {
-		return held, d
+		var d transfer.Data
+		return nil, d
 	}
 	switch {
 	case t.opts.OnPaste != nil:
-		d = v.services.ReadClipboardData()
+		return held, v.services.ReadClipboardData()
 	case t.readsClipboard():
-		var formats []transfer.Format
+		formats := make([]transfer.Format, 0, len(held))
 		for _, f := range held {
 			if offerMIME(f) != "" {
 				formats = append(formats, f)
 			}
 		}
-		d = v.services.ReadClipboardData(formats...)
+		return held, v.services.ReadClipboardData(formats...)
 	default:
-		d = v.services.ReadClipboardData(transfer.Text)
+		return held, v.services.ReadClipboardData(transfer.Text)
 	}
-	return held, d
 }
 
 // clearSelection lets go of the selection.
